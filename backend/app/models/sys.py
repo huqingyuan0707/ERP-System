@@ -2,7 +2,17 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -103,6 +113,101 @@ class SysRolePermission(Base):
     permission_id: Mapped[int] = mapped_column(
         BIGINT_PK, ForeignKey("sys_permission.id", ondelete="CASCADE"), primary_key=True
     )
+
+
+class SysRoleDept(Base):
+    """角色-数据权限部门关联（数据范围自定义部门集，C-04）。"""
+
+    __tablename__ = "sys_role_dept"
+
+    role_id: Mapped[int] = mapped_column(
+        BIGINT_PK, ForeignKey("sys_role.id", ondelete="CASCADE"), primary_key=True
+    )
+    dept_id: Mapped[int] = mapped_column(
+        BIGINT_PK, ForeignKey("sys_dept.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
+class SysDictType(TimestampMixin, SoftDeleteMixin, VersionMixin, Base):
+    """字典类型。"""
+
+    __tablename__ = "sys_dict_type"
+
+    id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    remark: Mapped[str | None] = mapped_column(String(255))
+
+    __table_args__ = (
+        Index(
+            "uq_dict_type_code",
+            "code",
+            unique=True,
+            sqlite_where=text("is_deleted = 0"),
+            postgresql_where=text("is_deleted = false"),
+        ),
+    )
+
+
+class SysDictItem(TimestampMixin, SoftDeleteMixin, Base):
+    """字典项。"""
+
+    __tablename__ = "sys_dict_item"
+
+    id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    type_code: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    label: Mapped[str] = mapped_column(String(64), nullable=False)
+    value: Mapped[str] = mapped_column(String(64), nullable=False)
+    sort: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    status: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    remark: Mapped[str | None] = mapped_column(String(255))
+
+    __table_args__ = (
+        Index(
+            "uq_dict_item",
+            "type_code",
+            "value",
+            unique=True,
+            sqlite_where=text("is_deleted = 0"),
+            postgresql_where=text("is_deleted = false"),
+        ),
+    )
+
+
+class SysConfig(TimestampMixin, SoftDeleteMixin, Base):
+    """系统参数（key-value）。"""
+
+    __tablename__ = "sys_config"
+
+    id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    value: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    remark: Mapped[str | None] = mapped_column(String(255))
+
+    __table_args__ = (
+        Index(
+            "uq_config_key",
+            "key",
+            unique=True,
+            sqlite_where=text("is_deleted = 0"),
+            postgresql_where=text("is_deleted = false"),
+        ),
+    )
+
+
+class SysBillNoSeq(Base):
+    """单号序号（按业务 + 日期段计数，支撑每日重置）。"""
+
+    __tablename__ = "sys_bill_no_seq"
+
+    id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    biz_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    period: Mapped[str] = mapped_column(String(8), nullable=False)
+    current_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    __table_args__ = (UniqueConstraint("biz_key", "period", name="uq_bill_no_seq"),)
 
 
 class SysOperLog(TimestampMixin, Base):

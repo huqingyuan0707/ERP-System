@@ -123,6 +123,9 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("修改用户", "sys:user:edit", user_menu.id, 2),
         _button("删除用户", "sys:user:delete", user_menu.id, 3),
         _button("重置密码", "sys:user:reset", user_menu.id, 4),
+        _button("新增角色", "sys:role:add", role_menu.id, 2),
+        _button("修改角色", "sys:role:edit", role_menu.id, 3),
+        _button("删除角色", "sys:role:delete", role_menu.id, 4),
         _button("角色分配", "sys:role:assign", role_menu.id, 5),
         _button("新增商品", "base:goods:add", goods_menu.id, 1),
         _button("修改商品", "base:goods:edit", goods_menu.id, 2),
@@ -236,12 +239,30 @@ async def _seed_base_data(session: AsyncSession) -> None:
     await session.flush()
 
     goods_rows = [
-        ("GD0001", "无线鼠标", "2.4G黑色", category_electronics.id, unit_piece.id, "6901234567890", 35, 69, 10, 200),
-        ("GD0002", "机械键盘", "87键青轴", category_electronics.id, unit_piece.id, "6901234567891", 120, 239, 5, 100),
-        ("GD0003", "笔记本电脑", "14英寸/i5/16G", category_electronics.id, unit_set.id, "6901234567892", 3800, 4599, 2, 50),
-        ("GD0004", "A4打印纸", "70g/500张", category_office.id, unit_box.id, "6901234567893", 18, 32, 20, 500),
-        ("GD0005", "签字笔", "0.5mm黑色", category_office.id, unit_box.id, "6901234567894", 9.5, 19.9, 50, 1000),
-        ("GD0006", "文件收纳盒", "尺寸40cm", category_office.id, unit_piece.id, "6901234567895", 12, 25, 10, 200),
+        (
+            "GD0001", "无线鼠标", "2.4G黑色", category_electronics.id, unit_piece.id,
+            "6901234567890", 35, 69, 10, 200,
+        ),
+        (
+            "GD0002", "机械键盘", "87键青轴", category_electronics.id, unit_piece.id,
+            "6901234567891", 120, 239, 5, 100,
+        ),
+        (
+            "GD0003", "笔记本电脑", "14英寸/i5/16G", category_electronics.id, unit_set.id,
+            "6901234567892", 3800, 4599, 2, 50,
+        ),
+        (
+            "GD0004", "A4打印纸", "70g/500张", category_office.id, unit_box.id,
+            "6901234567893", 18, 32, 20, 500,
+        ),
+        (
+            "GD0005", "签字笔", "0.5mm黑色", category_office.id, unit_box.id,
+            "6901234567894", 9.5, 19.9, 50, 1000,
+        ),
+        (
+            "GD0006", "文件收纳盒", "尺寸40cm", category_office.id, unit_piece.id,
+            "6901234567895", 12, 25, 10, 200,
+        ),
     ]
     session.add_all(
         [
@@ -258,7 +279,10 @@ async def _seed_base_data(session: AsyncSession) -> None:
                 stock_upper=stock_upper,
                 status=1,
             )
-            for code, name, spec, category_id, unit_id, barcode, cost_price, sale_price, stock_lower, stock_upper in goods_rows
+            for (
+                code, name, spec, category_id, unit_id,
+                barcode, cost_price, sale_price, stock_lower, stock_upper,
+            ) in goods_rows
         ]
     )
     await session.flush()

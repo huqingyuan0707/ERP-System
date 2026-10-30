@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, goods, system
+from app.api.v1.endpoints import auth, configs, dicts, goods, system
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import ApiResponse, success_response
@@ -65,4 +65,6 @@ def _select_one():
 
 api_router.include_router(auth.router)
 api_router.include_router(system.router)
+api_router.include_router(dicts.router)
+api_router.include_router(configs.router)
 api_router.include_router(goods.router)
