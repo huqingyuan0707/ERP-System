@@ -9,7 +9,6 @@ from app.repositories.config import ConfigRepository
 from app.schemas.config import ConfigUpdateItem
 from app.utils.bill_no import BILLNO_KEY_PREFIX, parse_billno_rule
 
-
 CONFIG_CACHE_PREFIX = "cfg:"
 CONFIG_CACHE_ALL = "configs:all"
 

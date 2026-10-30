@@ -14,7 +14,6 @@ from sqlalchemy.sql import Select
 
 from app.models.sys import SysDept, SysRole, SysRoleDept, SysUser, SysUserRole
 
-
 SCOPE_SELF = 1
 SCOPE_DEPT = 2
 SCOPE_ALL = 3

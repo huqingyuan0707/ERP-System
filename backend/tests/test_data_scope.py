@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 from sqlalchemy import delete, select
 
-from app.core.data_scope import allows, apply_scope, resolve_scope
+from app.core.data_scope import apply_scope, allows, resolve_scope
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal
 from app.main import app
