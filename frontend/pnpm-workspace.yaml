@@ -1,0 +1,5 @@
+# 允许执行构建脚本的依赖（pnpm 默认忽略依赖的 postinstall；可用 `pnpm approve-builds` 维护）
+# esbuild 需要 postinstall 装配平台二进制，否则 vite build 会失败
+allowBuilds:
+  esbuild: true
+  vue-demi: true

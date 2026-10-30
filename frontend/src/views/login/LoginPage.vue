@@ -1,0 +1,86 @@
+<script setup lang="ts">
+/** 登录页：账号密码登录，成功后按 redirect 跳转。 */
+import { reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+
+import { useUserStore } from '@/stores/user'
+
+const route = useRoute()
+const router = useRouter()
+const userStore = useUserStore()
+
+const formRef = ref<FormInstance>()
+const loading = ref(false)
+const form = reactive({ username: 'admin', password: '' })
+
+const rules: FormRules = {
+  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
+}
+
+const handleLogin = async (): Promise<void> => {
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (!valid) return
+  loading.value = true
+  try {
+    await userStore.login({ username: form.username, password: form.password })
+    await userStore.fetchUser()
+    ElMessage.success('登录成功')
+    const redirect = (route.query.redirect as string) || '/dashboard'
+    router.push(redirect)
+  } catch {
+    // 错误提示已由 request 拦截器统一处理
+  } finally {
+    loading.value = false
+  }
+}
+</script>
+
+<template>
+  <div class="login-page">
+    <el-card class="login-card">
+      <h2 class="login-title">企业ERP系统</h2>
+      <el-form ref="formRef" :model="form" :rules="rules" size="large" @keyup.enter="handleLogin">
+        <el-form-item prop="username">
+          <el-input v-model="form.username" placeholder="用户名" :prefix-icon="'User'" />
+        </el-form-item>
+        <el-form-item prop="password">
+          <el-input
+            v-model="form.password"
+            type="password"
+            placeholder="密码"
+            show-password
+            :prefix-icon="'Lock'"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" class="login-btn" :loading="loading" @click="handleLogin">
+            登 录
+          </el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+  </div>
+</template>
+
+<style scoped>
+.login-page {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1e3a5f 0%, #0f2438 100%);
+}
+.login-card {
+  width: 380px;
+  padding: 8px;
+}
+.login-title {
+  text-align: center;
+  margin: 8px 0 24px;
+}
+.login-btn {
+  width: 100%;
+}
+</style>
