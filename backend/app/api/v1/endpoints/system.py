@@ -35,9 +35,9 @@ async def list_users(
 async def create_user(
     payload: UserCreate,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("sys:user:add"))],
+    current_user: Annotated[SysUser, Depends(require_perm("sys:user:add"))],
 ) -> ApiResponse[UserOut]:
-    result = await UserService(db).create_user(payload)
+    result = await UserService(db).create_user(payload, current_user.id)
     return success_response(result)
 
 
@@ -56,9 +56,9 @@ async def update_user(
     user_id: int,
     payload: UserUpdate,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("sys:user:edit"))],
+    current_user: Annotated[SysUser, Depends(require_perm("sys:user:edit"))],
 ) -> ApiResponse[UserOut]:
-    result = await UserService(db).update_user(user_id, payload)
+    result = await UserService(db).update_user(user_id, payload, current_user.id)
     return success_response(result)
 
 
@@ -66,9 +66,9 @@ async def update_user(
 async def delete_user(
     user_id: int,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("sys:user:delete"))],
+    current_user: Annotated[SysUser, Depends(require_perm("sys:user:delete"))],
 ) -> ApiResponse[None]:
-    await UserService(db).delete_user(user_id)
+    await UserService(db).delete_user(user_id, current_user.id)
     return success_response(None)
 
 
@@ -77,9 +77,9 @@ async def reset_password(
     user_id: int,
     payload: PasswordResetIn,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("sys:user:reset"))],
+    current_user: Annotated[SysUser, Depends(require_perm("sys:user:reset"))],
 ) -> ApiResponse[None]:
-    await UserService(db).reset_password(user_id, payload.password)
+    await UserService(db).reset_password(user_id, payload.password, current_user.id)
     return success_response(None)
 
 

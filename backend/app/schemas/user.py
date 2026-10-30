@@ -53,6 +53,8 @@ class UserOut(BaseModel):
     dept_id: int | None = None
     position: str | None = None
     status: int = 1
+    role_ids: list[int] = Field(default_factory=list)
+    last_login_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

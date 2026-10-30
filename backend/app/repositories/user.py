@@ -3,6 +3,7 @@
 from sqlalchemy import delete, or_, select
 
 from app.models.sys import (
+    SysDept,
     SysPermission,
     SysRole,
     SysRolePermission,
@@ -81,6 +82,41 @@ class UserRepository(BaseRepository[SysUser]):
             .order_by(SysPermission.sort, SysPermission.id)
         )
         return list((await self.db.execute(stmt)).scalars().all())
+
+    async def list_role_ids(self, user_id: int) -> list[int]:
+        """查询用户已分配的角色 id 列表。"""
+        stmt = select(SysUserRole.role_id).where(SysUserRole.user_id == user_id)
+        return list((await self.db.execute(stmt)).scalars().all())
+
+    async def list_role_ids_map(self, user_ids: list[int]) -> dict[int, list[int]]:
+        """批量查询多个用户的角色 id，避免列表页 N+1 查询。"""
+        if not user_ids:
+            return {}
+        stmt = select(SysUserRole.user_id, SysUserRole.role_id).where(
+            SysUserRole.user_id.in_(user_ids)
+        )
+        mapping: dict[int, list[int]] = {}
+        for user_id, role_id in (await self.db.execute(stmt)).all():
+            mapping.setdefault(user_id, []).append(role_id)
+        return mapping
+
+    async def existing_role_ids(self, role_ids: list[int]) -> set[int]:
+        """返回真实存在的角色 id 集合（用于存在性校验）。"""
+        if not role_ids:
+            return set()
+        stmt = select(SysRole.id).where(
+            SysRole.id.in_(role_ids), SysRole.is_deleted.is_(False)
+        )
+        return set((await self.db.execute(stmt)).scalars().all())
+
+    async def existing_dept_ids(self, dept_ids: list[int]) -> set[int]:
+        """返回真实存在的部门 id 集合（用于存在性校验）。"""
+        if not dept_ids:
+            return set()
+        stmt = select(SysDept.id).where(
+            SysDept.id.in_(dept_ids), SysDept.is_deleted.is_(False)
+        )
+        return set((await self.db.execute(stmt)).scalars().all())
 
     async def replace_roles(self, user_id: int, role_ids: list[int]) -> None:
         """重建用户的角色关联。"""
