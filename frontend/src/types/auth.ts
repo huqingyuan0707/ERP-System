@@ -11,11 +11,13 @@ export interface TokenResult {
   expiresIn: number
 }
 
-/** 动态菜单节点（/auth/me 返回，本任务仅存储备用）。 */
+/** 动态菜单节点（/auth/me 返回，用于生成动态路由与侧边栏）。 */
 export interface MenuNode {
   id: number
   name: string
   routePath: string | null
+  /** 视图组件路径（相对 src/views，如 base/goods/index）。 */
+  component: string | null
   icon: string | null
   children: MenuNode[]
 }

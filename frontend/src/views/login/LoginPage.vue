@@ -27,7 +27,8 @@ const handleLogin = async (): Promise<void> => {
     await userStore.login({ username: form.username, password: form.password })
     await userStore.fetchUser()
     ElMessage.success('登录成功')
-    const redirect = (route.query.redirect as string) || '/dashboard'
+    // 默认进 '/'，由路由守卫按用户首个可导航菜单落地
+    const redirect = (route.query.redirect as string) || '/'
     router.push(redirect)
   } catch {
     // 错误提示已由 request 拦截器统一处理

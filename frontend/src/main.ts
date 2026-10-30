@@ -6,6 +6,7 @@ import { createPinia } from 'pinia'
 
 import App from './App.vue'
 import router from './router'
+import permDirective from '@/directives/permission'
 
 import 'element-plus/dist/index.css'
 import '@/styles/index.css'
@@ -15,6 +16,8 @@ const app = createApp(App)
 Object.entries(ElementPlusIconsVue).forEach(([name, component]) => {
   app.component(name, component)
 })
+
+app.directive('perm', permDirective)
 
 app.use(createPinia())
 app.use(router)

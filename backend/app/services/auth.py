@@ -77,6 +77,7 @@ def _build_menu_tree(nodes: list[SysPermission]) -> list[MenuOut]:
                 id=node.id,
                 name=node.name,
                 route_path=node.route_path,
+                component=node.component,
                 icon=node.icon,
                 children=_build(node),
             )

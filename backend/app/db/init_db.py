@@ -60,6 +60,16 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     await session.flush()
 
     menus = [
+        # 经营看板（根级菜单）
+        SysPermission(
+            name="经营看板",
+            type=2,
+            perm_code="rpt:dashboard:list",
+            route_path="/dashboard",
+            component="dashboard/DashboardPage",
+            icon="Odometer",
+            sort=0,
+        ),
         # 基础资料
         _menu("商品管理", "base:goods:list", "/base/goods", dir_base.id, 1),
         _menu("仓库管理", "base:warehouse:list", "/base/warehouse", dir_base.id, 2),
@@ -105,6 +115,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     await session.flush()
 
     user_menu = next(menu for menu in menus if menu.perm_code == "sys:user:list")
+    role_menu = next(menu for menu in menus if menu.perm_code == "sys:role:list")
     goods_menu = next(menu for menu in menus if menu.perm_code == "base:goods:list")
 
     buttons = [
@@ -112,6 +123,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("修改用户", "sys:user:edit", user_menu.id, 2),
         _button("删除用户", "sys:user:delete", user_menu.id, 3),
         _button("重置密码", "sys:user:reset", user_menu.id, 4),
+        _button("角色分配", "sys:role:assign", role_menu.id, 5),
         _button("新增商品", "base:goods:add", goods_menu.id, 1),
         _button("修改商品", "base:goods:edit", goods_menu.id, 2),
         _button("删除商品", "base:goods:delete", goods_menu.id, 3),
@@ -174,6 +186,7 @@ async def _seed_roles(session: AsyncSession, permissions: list[SysPermission]) -
     for perm in permissions:
         session.add(SysRolePermission(role_id=admin_role.id, permission_id=perm.id))
     viewer_codes = {
+        "rpt:dashboard:list",
         "sys:user:list",
         "base:goods:list",
         "base:warehouse:list",

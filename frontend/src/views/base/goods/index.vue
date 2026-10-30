@@ -15,10 +15,7 @@ import {
   getUnits,
   updateGoods,
 } from '@/api/goods'
-import { useUserStore } from '@/stores/user'
 import type { Goods, GoodsCategory, GoodsQuery, Unit } from '@/types/goods'
-
-const userStore = useUserStore()
 
 const loading = ref(false)
 const rows = ref<Goods[]>([])
@@ -231,18 +228,14 @@ onMounted(() => {
 
     <div class="toolbar">
       <el-button
-        v-if="userStore.hasPerm('base:goods:add')"
+        v-perm="'base:goods:add'"
         type="primary"
         :icon="'Plus'"
         @click="openCreate"
       >
         新增商品
       </el-button>
-      <el-button
-        v-if="userStore.hasPerm('base:goods:export')"
-        :icon="'Download'"
-        @click="handleExport"
-      >
+      <el-button v-perm="'base:goods:export'" :icon="'Download'" @click="handleExport">
         导出 Excel
       </el-button>
     </div>
@@ -267,20 +260,10 @@ onMounted(() => {
       </el-table-column>
       <el-table-column label="操作" width="140" fixed="right" align="center">
         <template #default="{ row }">
-          <el-button
-            v-if="userStore.hasPerm('base:goods:edit')"
-            link
-            type="primary"
-            @click="openEdit(row)"
-          >
+          <el-button v-perm="'base:goods:edit'" link type="primary" @click="openEdit(row)">
             编辑
           </el-button>
-          <el-button
-            v-if="userStore.hasPerm('base:goods:delete')"
-            link
-            type="danger"
-            @click="handleDelete(row)"
-          >
+          <el-button v-perm="'base:goods:delete'" link type="danger" @click="handleDelete(row)">
             删除
           </el-button>
         </template>

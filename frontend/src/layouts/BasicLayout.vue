@@ -13,21 +13,8 @@ const userStore = useUserStore()
 
 const collapsed = ref(false)
 
-interface MenuItem {
-  path: string
-  title: string
-  icon: string
-  perm?: string
-}
-
-const menus: MenuItem[] = [
-  { path: '/dashboard', title: '经营看板', icon: 'Odometer' },
-  { path: '/base/goods', title: '商品管理', icon: 'Goods', perm: 'base:goods:list' },
-]
-
-const visibleMenus = computed(() =>
-  menus.filter((m) => !m.perm || userStore.hasPerm(m.perm)),
-)
+/** 侧边栏菜单来自 /auth/me（服务端已按角色过滤），目录嵌套一层菜单。 */
+const menus = computed(() => userStore.menus)
 
 const activeMenu = computed(() => route.path)
 
@@ -98,10 +85,27 @@ const submitPwdChange = async (): Promise<void> => {
     <el-aside :width="collapsed ? '64px' : '210px'" class="aside">
       <div class="logo">{{ collapsed ? 'ERP' : '企业ERP系统' }}</div>
       <el-menu :default-active="activeMenu" :collapse="collapsed" router class="menu">
-        <el-menu-item v-for="m in visibleMenus" :key="m.path" :index="m.path">
-          <el-icon><component :is="m.icon" /></el-icon>
-          <template #title>{{ m.title }}</template>
-        </el-menu-item>
+        <template v-for="menu in menus" :key="menu.id">
+          <el-sub-menu v-if="menu.children.length > 0" :index="menu.routePath ?? `menu-${menu.id}`">
+            <template #title>
+              <el-icon v-if="menu.icon"><component :is="menu.icon" /></el-icon>
+              <span>{{ menu.name }}</span>
+            </template>
+            <el-menu-item
+              v-for="child in menu.children"
+              :key="child.id"
+              :index="child.routePath ?? `menu-${child.id}`"
+              :disabled="!child.routePath"
+            >
+              <el-icon v-if="child.icon"><component :is="child.icon" /></el-icon>
+              <template #title>{{ child.name }}</template>
+            </el-menu-item>
+          </el-sub-menu>
+          <el-menu-item v-else-if="menu.routePath" :index="menu.routePath">
+            <el-icon v-if="menu.icon"><component :is="menu.icon" /></el-icon>
+            <template #title>{{ menu.name }}</template>
+          </el-menu-item>
+        </template>
       </el-menu>
     </el-aside>
     <el-container>

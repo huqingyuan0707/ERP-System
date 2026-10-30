@@ -57,6 +57,7 @@ class MenuOut(BaseModel):
     id: int
     name: str
     route_path: str | None = None
+    component: str | None = None
     icon: str | None = None
     children: list["MenuOut"] = Field(default_factory=list)
 
