@@ -190,11 +190,21 @@ const submitPwdChange = async (): Promise<void> => {
   white-space: nowrap;
 }
 .menu {
+  /* 深色侧边栏：覆盖 Element Plus 菜单默认配色，避免深底深字看不清 */
+  --el-menu-bg-color: transparent;
+  --el-menu-text-color: rgba(255, 255, 255, 0.7);
+  --el-menu-hover-text-color: #fff;
+  --el-menu-hover-bg-color: rgba(255, 255, 255, 0.08);
+  --el-menu-active-color: #409eff;
+  --el-menu-item-height: 48px;
   border-right: none;
   background: transparent;
 }
 .menu:not(.el-menu--collapse) {
   width: 210px;
+}
+.menu :deep(.el-menu-item.is-active) {
+  background: rgba(64, 158, 255, 0.15);
 }
 .header {
   display: flex;
