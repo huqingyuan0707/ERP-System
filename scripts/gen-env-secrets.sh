@@ -35,4 +35,12 @@ set_var DB_PASSWORD   "$(gen)"
 set_var SECRET_KEY     "$(gen)"
 set_var MINIO_PASSWORD "$(gen)"
 
+# 关键：把生成的 DB_PASSWORD 同步进 DATABASE_URL 连接串，
+# 否则 postgres 容器用新密码、后端连接串还是占位密码，后端会认证失败崩溃
+DBPW="$(grep -E '^DB_PASSWORD=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+if [ -n "$DBPW" ] && grep -qE '^DATABASE_URL=' "$ENV_FILE"; then
+  sed -i -E "s|(postgresql\+asyncpg://[^:/]+:)[^@]+(@)|\1${DBPW}\2|" "$ENV_FILE"
+  echo "已同步 DATABASE_URL 中的数据库密码"
+fi
+
 echo "完成。请重新部署使新密钥生效：docker compose up -d --build"
