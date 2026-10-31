@@ -18,6 +18,11 @@ fail() {
   FAILED=1
 }
 
+# 仅提示，不影响退出码
+warn() {
+  echo "$1"
+}
+
 echo "==> 项目目录：$PROJECT_DIR"
 
 if [ ! -f "${PROJECT_DIR}/docker-compose.yml" ]; then
@@ -25,11 +30,25 @@ if [ ! -f "${PROJECT_DIR}/docker-compose.yml" ]; then
   exit 1
 fi
 
-# 读取 key 的值（去掉首尾空白与引号；不输出值本身）
+# 读取 key 的值（去掉 export 前缀、行内注释、首尾空白与引号；不输出值本身）
 read_value() {
   local file="$1" key="$2" value=""
   [ -f "$file" ] || return 0
-  value="$(awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/, ""); print; exit}' "$file" 2>/dev/null || true)"
+  # 用 index() 定位第一个 =，保证值中含 = 时不被截断
+  value="$(awk -v k="$key" '
+    {
+      line = $0
+      sub(/^[ \t]*export[ \t]+/, "", line)
+      idx = index(line, "=")
+      if (idx == 0) next
+      name = substr(line, 1, idx - 1)
+      gsub(/[ \t]/, "", name)
+      if (name != k) next
+      val = substr(line, idx + 1)
+      sub(/[ \t]+#.*$/, "", val)      # 去行内注释
+      print val
+      exit
+    }' "$file" 2>/dev/null || true)"
   value="${value%$'\r'}"
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
@@ -75,14 +94,21 @@ elif [ -z "$host" ]; then
 elif docker manifest inspect "${host}/erpa-backend:latest" >/dev/null 2>&1; then
   echo "[就绪] 可拉取 ${host}/erpa-backend:latest"
 else
-  fail "[警告] 无法读取 ${host}/erpa-backend:latest（仓库为空、未登录或无权限）"
+  # 该检查依赖本机已登录 registry，未登录时会误报，故仅告警
+  warn "[提示] 未读取到 ${host}/erpa-backend:latest（仓库为空、本机未 docker login 或无权限）"
 fi
 
 echo "==> 检查容器状态 ..."
-if docker compose ps 2>/dev/null; then
-  :
+if ! docker info >/dev/null 2>&1; then
+  fail "[错误] Docker daemon 未运行"
+elif running="$(docker compose ps --status running 2>&1)"; then
+  if [ -z "$running" ]; then
+    warn "[提示] 没有处于 running 状态的容器"
+  else
+    printf '%s\n' "$running"
+  fi
 else
-  fail "[警告] docker compose ps 执行失败（compose 文件缺失或 docker 未就绪）"
+  fail "[错误] docker compose ps 执行失败：$running"
 fi
 
 if [ "$FAILED" -eq 0 ]; then
