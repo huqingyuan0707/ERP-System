@@ -11,10 +11,10 @@ on:
         default: 'latest'
 
 env:
-  # 兼容两种 Secrets 写法：
-  #   1) ACR_REGISTRY  = registry.cn-hangzhou.aliyuncs.com/<命名空间>（含命名空间，推荐）
-  #   2) ACR_HOST + ACR_NAMESPACE = registry.cn-hangzhou.aliyuncs.com  +  <命名空间>
-  # 若 ACR_REGISTRY 只填了域名，流水线会用 ACR 凭证自动探测命名空间
+  # 兼容两种 Secrets 写法（推荐第 1 种，一行写全）：
+  #   1) ACR_REGISTRY = <地址>/<命名空间>，例如 crpi-xxxx.cn-beijing.personal.cr.aliyuncs.com/erp
+  #   2) ACR_HOST + ACR_NAMESPACE = <地址> + <命名空间>
+  # 注意：Secret 的值不能带空格/引号/换行，粘贴时请用「粘贴为纯文本」
   ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
   ACR_HOST: ${{ secrets.ACR_HOST }}
   ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
@@ -32,43 +32,51 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v5
 
-      - name: 诊断 ACR 配置（仅非敏感项，base64 避免被掩码）
-        run: |
-          {
-            echo "reg_b64=$(printf '%s' "$ACR_REGISTRY" | base64 -w0)"
-            echo "user_b64=$(printf '%s' "$ACR_USERNAME" | base64 -w0)"
-            echo "pass_len=${#ACR_PASSWORD}"
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-
       - name: 解析并校验 ACR 配置
         id: acr
-        env:
-          ACR_TAG: ${{ env.ACR_TAG }}
         run: |
           set -uo pipefail
+          # 清洗复制粘贴可能带入的空白、引号、反引号、回车换行
+          clean() {
+            printf '%s' "$1" | tr -d '\r\n\t ' | tr -d "\"'`"
+          }
+          registry="$(clean "$ACR_REGISTRY")"
+          host_raw="$(clean "$ACR_HOST")"
+          ns_raw="$(clean "$ACR_NAMESPACE")"
+          user="$(clean "$ACR_USERNAME")"
+
           host=""; ns=""
-          if [ -n "${ACR_HOST}" ] && [ -n "${ACR_NAMESPACE}" ]; then
-            host="${ACR_HOST%/}"
-            ns="${ACR_NAMESPACE#/}"
-          elif [ -n "${ACR_REGISTRY}" ] && [ "${ACR_REGISTRY#*/}" != "${ACR_REGISTRY}" ]; then
-            host="${ACR_REGISTRY%%/*}"
-            ns="${ACR_REGISTRY#*/}"
-          elif [ -n "${ACR_REGISTRY}" ]; then
-            host="${ACR_REGISTRY%/}"
+          if [ -n "$host_raw" ] && [ -n "$ns_raw" ]; then
+            host="${host_raw%/}"; ns="${ns_raw#/}"
+          elif [ -n "$registry" ]; then
+            if [ "${registry#*/}" != "$registry" ]; then
+              host="${registry%%/*}"; ns="${registry#*/}"
+            else
+              host="${registry%/}"
+            fi
           fi
 
-          if [ -z "${host}" ]; then
-            echo "::error::缺少 ACR 配置，请在 Settings → Secrets 设置 ACR_REGISTRY（或 ACR_HOST + ACR_NAMESPACE）"
+          if [ -z "$host" ]; then
+            echo "::error::缺少 ACR 配置：请设置 Secret ACR_REGISTRY=<地址>/<命名空间>（或 ACR_HOST + ACR_NAMESPACE）"
             exit 1
           fi
-          if [ -z "${ACR_USERNAME}" ] || [ -z "${ACR_PASSWORD}" ]; then
+          if ! printf '%s' "$host" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*$'; then
+            echo "::error::ACR 地址不合法（只允许字母数字、点、中划线）。请把 Secret 值改成纯域名，例如 crpi-xxxx.cn-beijing.personal.cr.aliyuncs.com/erp"
+            exit 1
+          fi
+          if [ -n "$ns" ] && ! printf '%s' "$ns" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+            echo "::error::命名空间不合法（只允许字母数字、点、下划线、中划线）。请检查 Secret ACR_REGISTRY 中 / 后面的部分"
+            exit 1
+          fi
+          if [ -z "$user" ] || [ -z "$ACR_PASSWORD" ]; then
             echo "::error::缺少 ACR_USERNAME / ACR_PASSWORD（取自 ACR 实例「访问凭证」）"
             exit 1
           fi
 
           case "${host}" in
             registry.*.aliyuncs.com) : ;;
-            *) echo "::warning::ACR 地址通常形如 registry.cn-hangzhou.aliyuncs.com，当前为 ${host}" ;;
+            *.aliyuncs.com) : ;;
+            *) echo "::warning::ACR 地址形如 registry.<区域>.aliyuncs.com，当前长度 ${#host}" ;;
           esac
 
           # 未配置命名空间时，用 ACR 凭证探测可用命名空间
@@ -77,16 +85,32 @@ jobs:
             echo "ACR 配置未包含命名空间，开始自动探测 ..."
             realm="$(curl -sI "https://${host}/v2/" | tr -d '\r' | grep -i '^www-authenticate:' | sed -n 's/.*realm="\([^"]*\)".*/\1/p')"
             if [ -n "${realm}" ]; then
-              token="$(curl -s -u "${ACR_USERNAME}:${ACR_PASSWORD}" "${realm}?service=${host}&scope=registry:catalog:*" | tr ',' '\n' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p' | head -1)"
+              token="$(curl -s -u "${user}:${ACR_PASSWORD}" "${realm}?service=${host}&scope=registry:catalog:*" | tr ',' '\n' | sed -n 's/.*"token":"\([^"]*\)".*/\1/p' | head -1)"
               if [ -n "${token}" ]; then
                 found="$(curl -s -H "Authorization: Bearer ${token}" "https://${host}/v2/_catalog" | tr ',' '\n' | sed -n 's/.*"\([^"]*\/[^"]*\)".*/\1/p' | cut -d/ -f1 | sort -u | tr '\n' ' ')"
                 candidates="${found}"
               fi
             fi
-            # 个人版 ACR 的登录用户名通常就是命名空间，作为兜底候选
-            if [ -z "${candidates}" ]; then
-              candidates="${ACR_USERNAME}"
+            # 个人版 ACR：登录用户名有时就是命名空间，作为兜底候选
+            if [ -z "${candidates}" ] && printf '%s' "$user" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+              candidates="${user}"
             fi
+          fi
+
+          # 只保留格式合法的候选
+          valid=""
+          for c in ${candidates}; do
+            if printf '%s' "$c" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+              valid="${valid} ${c}"
+            else
+              echo "跳过非法候选命名空间：${c}"
+            fi
+          done
+          candidates="${valid# }"
+
+          if [ -z "${candidates}" ]; then
+            echo "::error::无法确定可用命名空间。请把 Secret ACR_REGISTRY 显式设为 <地址>/<命名空间>，例如 ${host}/erp"
+            exit 1
           fi
 
           echo "host=${host}" >> "$GITHUB_OUTPUT"
@@ -101,9 +125,10 @@ jobs:
       - name: 登录阿里云 ACR
         env:
           ACR_HOST: ${{ steps.acr.outputs.host }}
+          ACR_USER: ${{ secrets.ACR_USERNAME }}
         run: |
           set -euo pipefail
-          echo "$ACR_PASSWORD" | docker login "$ACR_HOST" --username "$ACR_USERNAME" --password-stdin
+          echo "$ACR_PASSWORD" | docker login "$ACR_HOST" --username "$ACR_USER" --password-stdin
 
       - name: 预检镜像仓库是否可访问
         env:
@@ -145,9 +170,13 @@ jobs:
           set -uo pipefail
           ok=""
           for ns in ${CANDIDATES}; do
-            echo "==> 尝试推送到命名空间 ${ns}"
-            docker tag "erp-backend:${ACR_TAG}" "${ACR_HOST}/${ns}/erp-backend:${ACR_TAG}"
-            if docker push "${ACR_HOST}/${ns}/erp-backend:${ACR_TAG}"; then
+            ref="${ACR_HOST}/${ns}/erp-backend:${ACR_TAG}"
+            echo "==> 尝试推送到 ${ref}"
+            if ! docker tag "erp-backend:${ACR_TAG}" "${ref}"; then
+              echo "打标签失败，跳过该候选"
+              continue
+            fi
+            if docker push "${ref}"; then
               ok="${ns}"
               break
             fi
@@ -159,9 +188,9 @@ jobs:
             echo "排查顺序："
             echo "1) ACR 控制台确认命名空间存在，且区域与 ${ACR_HOST} 一致（凭证是区域级的）"
             echo "2) 在该命名空间下手动创建镜像仓库 erp-backend 与 erp-frontend（ACR 不会在 docker push 时自动建仓库，仓库不存在即返回 denied）"
-            echo "3) 确认 ACR_USERNAME 是 ACR 实例「访问凭证」里的用户名（通常是账号 ID / 命名空间），而不是 RAM 用户名"
+            echo "3) 确认 ACR_USERNAME 是 ACR 实例「访问凭证」里的用户名，不是 RAM 用户名"
             echo "4) 企业版实例：在 ACR「授权管理」给该账号授予该命名空间的 push/pull 权限"
-            echo "5) 若以上都正常，请把 ACR_REGISTRY 显式设置为 registry.<区域>.aliyuncs.com/<命名空间>，避免探测歧义"
+            echo "5) 若以上都正常，请把 ACR_REGISTRY 显式设置为 <地址>/<命名空间>，避免探测歧义"
             exit 1
           fi
 
@@ -175,13 +204,14 @@ jobs:
           ACR_TAG: ${{ env.ACR_TAG }}
         run: |
           set -euo pipefail
-          docker tag "erp-frontend:${ACR_TAG}" "${ACR_HOST}/${NAMESPACE}/erp-frontend:${ACR_TAG}"
-          if ! docker push "${ACR_HOST}/${NAMESPACE}/erp-frontend:${ACR_TAG}"; then
-            echo "::error::推送失败：${ACR_HOST}/${NAMESPACE}/erp-frontend:${ACR_TAG}"
+          ref="${ACR_HOST}/${NAMESPACE}/erp-frontend:${ACR_TAG}"
+          docker tag "erp-frontend:${ACR_TAG}" "${ref}"
+          if ! docker push "${ref}"; then
+            echo "::error::推送失败：${ref}"
             echo "排查方式与 backend 相同：命名空间 / 区域 / 仓库是否存在 / 推送权限"
             exit 1
           fi
-          echo "推送成功：${ACR_HOST}/${NAMESPACE}/erp-frontend:${ACR_TAG}"
+          echo "推送成功：${ref}"
 
   deploy:
     needs: build-and-push
