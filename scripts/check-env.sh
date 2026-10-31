@@ -201,7 +201,9 @@ fi
 # 注意：不支持 IPv6 字面量地址（如 [::1]:5000），这类地址请改用域名
 host="${registry%%/*}"
 namespace="${registry#*/}"
-[ "$namespace" = "$registry" ] && namespace=""
+if [ "$namespace" = "$registry" ]; then
+  namespace=""
+fi
 
 acr_user="$(get_value .acr.env ACR_USERNAME)"
 acr_pass="$(get_value .acr.env ACR_PASSWORD)"
@@ -230,8 +232,12 @@ else
     # backend 与 frontend 的 tag 各自独立，避免前端镜像被按后端 tag 去查
     compose_backend="$(compose_image backend)"
     compose_frontend="$(compose_image frontend)"
-    [ -n "$compose_backend" ] && BACKEND_IMAGE_REPO="$(repo_from_image "$compose_backend")"
-    [ -n "$compose_frontend" ] && FRONTEND_IMAGE_REPO="$(repo_from_image "$compose_frontend")"
+    if [ -n "$compose_backend" ]; then
+      BACKEND_IMAGE_REPO="$(repo_from_image "$compose_backend")"
+    fi
+    if [ -n "$compose_frontend" ]; then
+      FRONTEND_IMAGE_REPO="$(repo_from_image "$compose_frontend")"
+    fi
 
     for pair in "${BACKEND_IMAGE_REPO%%:*}:${BACKEND_IMAGE_TAG%%:*}" "${FRONTEND_IMAGE_REPO%%:*}:${FRONTEND_IMAGE_TAG%%:*}"; do
       repo="${pair%%:*}"

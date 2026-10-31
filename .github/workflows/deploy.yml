@@ -200,7 +200,9 @@ jobs:
                 break
               fi
             done
-            [ -n "$ok" ] && break
+            if [ -n "$ok" ]; then
+              break
+            fi
             echo "命名空间 ${ns} 推送失败，尝试下一个候选"
           done
 
@@ -325,7 +327,9 @@ jobs:
 
             # 逐行标记为敏感，确保后续任何日志输出都不会泄露私钥内容
             while IFS= read -r line; do
-              [ -n "$line" ] && echo "::add-mask::$line"
+              if [ -n "$line" ]; then
+                echo "::add-mask::$line"
+              fi
             done <<< "$key"
 
             # 私钥写入运行器临时文件（600）并通过 key_path 传给 SSH 步骤；
@@ -357,14 +361,20 @@ jobs:
           b64_token="$(printf '%s' "$DEPLOY_REPO_TOKEN" | base64 -w0)"
           # 掩码：即使意外被打印也不会泄露真实值
           for v in "$b64_user" "$b64_pass" "$b64_token"; do
-            [ -n "$v" ] && echo "::add-mask::$v"
+            if [ -n "$v" ]; then
+              echo "::add-mask::$v"
+            fi
           done
           {
             echo "acr_registry_b64=${b64_registry}"
             echo "acr_user_b64=${b64_user}"
             echo "acr_pass_b64=${b64_pass}"
             # 未配置 token 时不写该输出，远端按“未配置”分支处理
-            [ -n "$b64_token" ] && echo "deploy_repo_token_b64=${b64_token}"
+            # 注意：这里必须用 if 而不是 `[ -n ... ] && echo`，因为 CI 默认用 `bash -e`，
+            # 条件为假时整条命令返回 1，会让步骤直接失败
+            if [ -n "$b64_token" ]; then
+              echo "deploy_repo_token_b64=${b64_token}"
+            fi
           } >> "$GITHUB_OUTPUT"
         env:
           ACR_REGISTRY: ${{ needs.build-and-push.outputs.host }}/${{ needs.build-and-push.outputs.namespace }}
