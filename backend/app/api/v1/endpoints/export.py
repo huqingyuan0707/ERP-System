@@ -15,11 +15,16 @@ from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from app.core.deps import CurrentUserDep, DbDep, require_perm
+from app.core.exceptions import AppException, ErrorCode
 from app.models.sys import SysUser
+from app.repositories.task import TaskRepository
 from app.schemas.common import ApiResponse, success_response
+from app.schemas.goods import GoodsImportResult, GoodsQuery
 from app.schemas.task import TaskOut
+from app.services.auth import AuthService
 from app.services.excel_export import ExcelExportService
 from app.utils.importer import build_import_template
+
 
 router = APIRouter(tags=["导入导出"])
 
@@ -29,6 +34,9 @@ IMPORT_GOODS_PERM = "base:goods:import"
 EXPORT_STOCK_PERM = "inv:stock:export"
 EXPORT_REPORT_PERM = "report:export"
 
+# 导入文件大小上限 5MB，与前端提示保持一致
+IMPORT_MAX_SIZE = 5 * 1024 * 1024
+
 
 @router.post("/base/goods/import", summary="商品导入")
 async def import_goods(
@@ -36,9 +44,11 @@ async def import_goods(
     current_user: CurrentUserDep,
     file: UploadFile = File(..., description="Excel 文件"),
     _: Annotated[SysUser, Depends(require_perm(IMPORT_GOODS_PERM))] = None,
-) -> ApiResponse[dict[str, object]]:
-    """上传商品 Excel，逐行校验，全部成功才入库，失败返回错误报告。"""
+) -> ApiResponse[GoodsImportResult]:
+    """上传商品 Excel，逐行校验，全部成功才入库，失败返回逐行错误报告。"""
     content = await file.read()
+    if len(content) > IMPORT_MAX_SIZE:
+        raise AppException(ErrorCode.BAD_REQUEST, "文件大小不能超过 5MB")
     result = await ExcelExportService(db).import_goods(content, current_user.id)
     return success_response(result)
 
@@ -47,17 +57,13 @@ async def import_goods(
 async def export_goods(
     db: DbDep,
     current_user: CurrentUserDep,
-    keyword: str | None = Query(default=None),
-    category_id: int | None = Query(default=None),
-    status: int | None = Query(default=None),
+    query: Annotated[GoodsQuery, Query()],
     _: Annotated[SysUser, Depends(require_perm(EXPORT_GOODS_PERM))] = None,
 ) -> ApiResponse[TaskOut]:
-    """商品导出：提交异步任务，返回 taskId，前端轮询 /sys/tasks/{taskId}。"""
+    """商品导出：按当前筛选条件提交异步任务，返回 taskId，前端轮询 /sys/tasks/{taskId}。"""
     task = await ExcelExportService(db).export_goods(
         created_by=current_user.id,
-        keyword=keyword,
-        category_id=category_id,
-        status=status,
+        query=query,
     )
     return success_response(task)
 
@@ -113,19 +119,30 @@ async def export_statement(
 
 @router.get("/exports/download", summary="下载导出文件")
 async def download_export(
+    db: DbDep,
+    current_user: CurrentUserDep,
     fileName: str = Query(..., description="导出文件名"),
-    _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))] = None,
 ):
-    """下载已生成的导出 Excel 文件。"""
+    """下载已生成的导出 Excel 文件。
+
+    不再统一要求 report:export：商品/库存等各模块的导出人应能下载自己的文件；
+    通过任务记录校验归属，只有具备 report:export 或 * 权限的用户可下载他人文件。
+    """
     # 防止目录遍历攻击：只允许纯文件名，不允许路径分隔符
     if "/" in fileName or "\\" in fileName or ".." in fileName:
-        from app.core.exceptions import AppException, ErrorCode
-
         raise AppException(ErrorCode.BAD_REQUEST, "非法文件名")
+    task = await TaskRepository(db).get_by_file_name(fileName)
+    if task is None:
+        raise AppException(ErrorCode.NOT_FOUND, "文件不存在或已过期")
+    codes = await AuthService(db).get_permission_codes(current_user.id)
+    if (
+        "*" not in codes
+        and EXPORT_REPORT_PERM not in codes
+        and task.created_by != current_user.id
+    ):
+        raise AppException(ErrorCode.FORBIDDEN, "无权下载该导出文件")
     file_path = _Path("exports") / fileName
     if not file_path.exists():
-        from app.core.exceptions import AppException, ErrorCode
-
         raise AppException(ErrorCode.NOT_FOUND, "文件不存在或已过期")
     return FileResponse(
         path=str(file_path),
@@ -135,6 +152,11 @@ async def download_export(
 
 
 @router.get("/base/goods/template", summary="下载商品导入模板")
+@router.get(
+    "/base/goods/import-template",
+    include_in_schema=False,
+    summary="下载商品导入模板（兼容别名）",
+)
 async def download_goods_template(
     _: Annotated[SysUser, Depends(require_perm(IMPORT_GOODS_PERM))] = None,
 ):

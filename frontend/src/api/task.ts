@@ -61,19 +61,6 @@ export const exportStatement = (statementId: number): Promise<{
     method: 'get',
   })
 
-/** 商品导入：上传 Excel，全部成功才入库 */
-export const importGoods = (file: File): Promise<{
-  success: boolean
-  total: number
-  successCount: number
-  failCount: number
-  errors: Array<{ row: number; errors: string[] }>
-}> => {
-  const formData = new FormData()
-  formData.append('file', file)
-  return request({ url: '/base/goods/import', method: 'post', data: formData })
-}
-
 /** 下载导出文件（任务完成后调用） */
 export const downloadExportFile = (fileName: string): Promise<void> =>
   download(`/exports/download`, { fileName }, fileName)

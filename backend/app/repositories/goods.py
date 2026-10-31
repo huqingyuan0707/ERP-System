@@ -2,9 +2,9 @@
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.engine import Row
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base_data import BdGoods, BdGoodsCategory, BdUnit
+from app.models.inventory import InvStock
 from app.repositories.base import BaseRepository
 from app.schemas.goods import GoodsQuery
 
@@ -65,6 +65,14 @@ class GoodsRepository(BaseRepository[BdGoods]):
             return rows, len(rows)
         return await self.paginate_rows(stmt, query.page, query.page_size)
 
+    async def total_stock_qty(self, goods_id: int) -> float:
+        """汇总商品在各仓库的账面库存，用于删除前判断是否存在库存。"""
+        stmt = select(func.coalesce(func.sum(InvStock.qty), 0)).where(
+            InvStock.goods_id == goods_id,
+            InvStock.is_deleted.is_(False),
+        )
+        return float((await self.db.execute(stmt)).scalar_one())
+
 
 class GoodsCategoryRepository(BaseRepository[BdGoodsCategory]):
     """商品分类仓储。"""
@@ -75,7 +83,8 @@ class GoodsCategoryRepository(BaseRepository[BdGoodsCategory]):
         stmt = select(BdGoodsCategory).where(BdGoodsCategory.is_deleted.is_(False))
         if keyword:
             stmt = stmt.where(BdGoodsCategory.name.ilike(f"%{keyword}%"))
-        return list((await self.db.execute(stmt.order_by(BdGoodsCategory.sort, BdGoodsCategory.id))).scalars().all())
+        stmt = stmt.order_by(BdGoodsCategory.sort, BdGoodsCategory.id)
+        return list((await self.db.execute(stmt)).scalars().all())
 
     async def get_by_name(self, name: str, parent_id: int | None) -> BdGoodsCategory | None:
         stmt = select(BdGoodsCategory).where(
@@ -104,6 +113,36 @@ class GoodsCategoryRepository(BaseRepository[BdGoodsCategory]):
         )
         return int((await self.db.execute(stmt)).scalar_one())
 
+    async def children_count_map(self) -> dict[int, int]:
+        """一次性统计各分类的子分类数量，避免列表接口逐行查询（N+1）。"""
+        stmt = (
+            select(BdGoodsCategory.parent_id, func.count())
+            .where(
+                BdGoodsCategory.parent_id.is_not(None),
+                BdGoodsCategory.is_deleted.is_(False),
+            )
+            .group_by(BdGoodsCategory.parent_id)
+        )
+        return {
+            int(parent_id): int(count)
+            for parent_id, count in (await self.db.execute(stmt)).all()
+        }
+
+    async def goods_count_map(self) -> dict[int, int]:
+        """一次性统计各分类关联的商品数量，供前端禁用删除按钮。"""
+        stmt = (
+            select(BdGoods.category_id, func.count())
+            .where(
+                BdGoods.category_id.is_not(None),
+                BdGoods.is_deleted.is_(False),
+            )
+            .group_by(BdGoods.category_id)
+        )
+        return {
+            int(category_id): int(count)
+            for category_id, count in (await self.db.execute(stmt)).all()
+        }
+
 
 class UnitRepository(BaseRepository[BdUnit]):
     """计量单位仓储。"""
@@ -127,3 +166,18 @@ class UnitRepository(BaseRepository[BdUnit]):
             .where(BdGoods.unit_id == unit_id, BdGoods.is_deleted.is_(False))
         )
         return int((await self.db.execute(stmt)).scalar_one())
+
+    async def goods_count_map(self) -> dict[int, int]:
+        """一次性统计各单位被商品引用的数量。"""
+        stmt = (
+            select(BdGoods.unit_id, func.count())
+            .where(
+                BdGoods.unit_id.is_not(None),
+                BdGoods.is_deleted.is_(False),
+            )
+            .group_by(BdGoods.unit_id)
+        )
+        return {
+            int(unit_id): int(count)
+            for unit_id, count in (await self.db.execute(stmt)).all()
+        }

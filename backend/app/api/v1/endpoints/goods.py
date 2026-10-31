@@ -1,12 +1,14 @@
-"""基础资料端点（商品 / 商品分类 / 计量单位 CRUD + 导入导出）。"""
+"""基础资料端点（商品 / 商品分类 / 计量单位 CRUD）。
 
-from datetime import datetime
+导入导出统一由 export.py 按 C-07 异步任务实现，本模块只保留业务 CRUD，
+避免同一路径重复注册导致路由被前者遮蔽。
+"""
+
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import DbDep, require_perm
-from app.core.exceptions import AppException, ErrorCode
 from app.models.sys import SysUser
 from app.schemas.common import ApiResponse, PageResult, success_response
 from app.schemas.goods import (
@@ -15,7 +17,6 @@ from app.schemas.goods import (
     GoodsCategoryQuery,
     GoodsCategoryUpdate,
     GoodsCreate,
-    GoodsImportResult,
     GoodsOut,
     GoodsQuery,
     GoodsUpdate,
@@ -25,58 +26,12 @@ from app.schemas.goods import (
     UnitUpdate,
 )
 from app.services.goods import GoodsCategoryService, GoodsService, UnitService
-from app.utils.excel import build_workbook
 
 
 router = APIRouter(prefix="/base", tags=["基础资料-商品"])
 
-XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-IMPORT_MAX_SIZE = 5 * 1024 * 1024  # 5MB
-
 
 # ---------- 商品 ----------
-
-
-@router.get("/goods/export", summary="导出商品")
-async def export_goods(
-    query: Annotated[GoodsQuery, Query()],
-    db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("base:goods:export"))],
-) -> Response:
-    headers, rows = await GoodsService(db).export_goods(query)
-    content = build_workbook(headers, rows, sheet_title="商品列表")
-    filename = f"goods_{datetime.now().strftime('%Y%m%d%H%M%S')}.xlsx"
-    return Response(
-        content=content,
-        media_type=XLSX_MEDIA_TYPE,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.get("/goods/import-template", summary="下载商品导入模板")
-async def download_import_template(
-    db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("base:goods:import"))],
-) -> Response:
-    content = GoodsService(db).build_import_template()
-    return Response(
-        content=content,
-        media_type=XLSX_MEDIA_TYPE,
-        headers={"Content-Disposition": 'attachment; filename="goods_import_template.xlsx"'},
-    )
-
-
-@router.post("/goods/import", summary="导入商品")
-async def import_goods(
-    db: DbDep,
-    file: Annotated[UploadFile, File()],
-    _: Annotated[SysUser, Depends(require_perm("base:goods:import"))],
-) -> ApiResponse[GoodsImportResult]:
-    content = await file.read()
-    if len(content) > IMPORT_MAX_SIZE:
-        raise AppException(ErrorCode.BAD_REQUEST, "文件大小不能超过 5MB")
-    result = await GoodsService(db).import_goods(content)
-    return success_response(result)
 
 
 @router.get("/goods", summary="商品列表")

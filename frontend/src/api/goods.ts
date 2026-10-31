@@ -7,6 +7,7 @@ import type {
   GoodsCategory,
   GoodsCategoryPayload,
   GoodsCreatePayload,
+  GoodsImportResult,
   GoodsQuery,
   GoodsUpdatePayload,
   Unit,
@@ -28,8 +29,16 @@ export const updateGoods = (id: number, payload: GoodsUpdatePayload): Promise<Go
 export const deleteGoods = (id: number): Promise<null> =>
   request({ url: `/base/goods/${id}`, method: 'delete' })
 
-export const exportGoods = (params: GoodsQuery): Promise<void> =>
-  download('/base/goods/export', { ...params }, '商品列表.xlsx')
+/** 下载商品导入模板（需要登录态，走统一下载封装以携带 Token）。 */
+export const downloadGoodsTemplate = (): Promise<void> =>
+  download('/base/goods/template', {}, '商品导入模板.xlsx')
+
+/** 商品导入：后端逐行校验，全部通过才入库；失败返回逐行错误报告。 */
+export const importGoods = (file: File): Promise<GoodsImportResult> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request({ url: '/base/goods/import', method: 'post', data: formData })
+}
 
 export const getCategories = (): Promise<GoodsCategory[]> =>
   request({ url: '/base/categories', method: 'get', params: { pageSize: 100 } })

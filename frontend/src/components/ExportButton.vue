@@ -88,11 +88,15 @@ const pollTask = async (taskId: string): Promise<void> => {
     const task = await getTaskDetail(taskId)
     progress.value = task.progress
     if (task.status === 3) {
-      // 成功：下载文件
+      // 成功：文件名由后端任务记录决定，避免前端硬编码类型前缀导致文件名不匹配
       clearTimer()
       polling.value = false
       progress.value = 100
-      const fileName = `${props.type}_export_${taskId}.xlsx`
+      const fileName = task.filePath?.split(/[\\/]/).pop()
+      if (!fileName) {
+        ElMessage.error('导出失败：未生成文件')
+        return
+      }
       await downloadExportFile(fileName)
       ElMessage.success('导出完成，文件已下载')
     } else if (task.status === 4) {

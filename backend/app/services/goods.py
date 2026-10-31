@@ -1,4 +1,7 @@
-"""商品业务逻辑（商品、分类、单位 CRUD + 导入导出）。"""
+"""商品业务逻辑（商品、分类、单位 CRUD）。
+
+导入导出由 ExcelExportService 按 C-07 统一处理，本模块不承载文件读写。
+"""
 
 from decimal import Decimal
 
@@ -14,8 +17,6 @@ from app.schemas.goods import (
     GoodsCategoryQuery,
     GoodsCategoryUpdate,
     GoodsCreate,
-    GoodsImportResult,
-    GoodsImportRow,
     GoodsOut,
     GoodsQuery,
     GoodsUpdate,
@@ -25,25 +26,10 @@ from app.schemas.goods import (
     UnitUpdate,
 )
 from app.utils.code_gen import format_code, next_seq_from_code
-from app.utils.importer import IMPORT_HEADERS, build_import_template, parse_import_rows, to_float, to_str
 from app.utils.pagination import paginate_result
 
 
 GOODS_CODE_PREFIX = "GD"
-EXPORT_LIMIT = 10000
-EXPORT_HEADERS = [
-    "编码",
-    "名称",
-    "规格",
-    "分类",
-    "单位",
-    "条码",
-    "成本价",
-    "售价",
-    "库存下限",
-    "库存上限",
-    "状态",
-]
 
 
 def _to_goods_out(
@@ -61,7 +47,7 @@ def _to_goods_out(
 
 
 class GoodsService:
-    """商品 CRUD、自动编码、导入与导出。"""
+    """商品 CRUD 与自动编码。"""
 
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
@@ -131,127 +117,12 @@ class GoodsService:
         return _to_goods_out(goods, category_name, unit_name)
 
     async def delete_goods(self, goods_id: int) -> None:
+        """软删除商品；存在库存时禁止删除，避免库存与商品档案失联。"""
         goods = await self._get_active_goods(goods_id)
+        if await self.goods.total_stock_qty(goods_id) > 0:
+            raise AppException(ErrorCode.CONFLICT, "该商品存在库存，无法删除")
         goods.is_deleted = True
         await self.db.commit()
-
-    async def export_goods(self, query: GoodsQuery) -> tuple[list[str], list[list[object]]]:
-        rows, _ = await self.goods.list_goods(query, limit=EXPORT_LIMIT)
-        data = [
-            [
-                goods.code,
-                goods.name,
-                goods.spec or "",
-                category_name or "",
-                unit_name or "",
-                goods.barcode or "",
-                float(goods.cost_price),
-                float(goods.sale_price),
-                float(goods.stock_lower),
-                float(goods.stock_upper),
-                goods.status,
-            ]
-            for goods, category_name, unit_name in rows
-        ]
-        return EXPORT_HEADERS, data
-
-    def build_import_template(self) -> bytes:
-        """生成导入模板文件字节。"""
-        return build_import_template()
-
-    async def import_goods(self, content: bytes) -> GoodsImportResult:
-        """解析上传的 Excel 并批量导入商品。
-
-        分类/单位按名称自动匹配，不存在则自动创建；失败行不影响成功行。
-        """
-        parsed = parse_import_rows(content)
-        result = GoodsImportResult(total=len(parsed))
-        seen_codes: set[str] = set()
-        seen_barcodes: set[str] = set()
-
-        for row_no, item in parsed:
-            name = to_str(item.get("商品名称"))
-            code = to_str(item.get("商品编码"))
-            barcode = to_str(item.get("条码"))
-            if not name:
-                result.rows.append(
-                    GoodsImportRow(row=row_no, success=False, message="商品名称不能为空")
-                )
-                continue
-            if code and code in seen_codes:
-                result.rows.append(
-                    GoodsImportRow(row=row_no, code=code, name=name, success=False, message="文件内编码重复")
-                )
-                continue
-            if code and await self.goods.get_by_code(code):
-                result.rows.append(
-                    GoodsImportRow(row=row_no, code=code, name=name, success=False, message=f"编码已存在: {code}")
-                )
-                continue
-            if barcode and barcode in seen_barcodes:
-                result.rows.append(
-                    GoodsImportRow(row=row_no, code=code, name=name, success=False, message="文件内条码重复")
-                )
-                continue
-            if barcode and await self.goods.get_by_barcode(barcode):
-                result.rows.append(
-                    GoodsImportRow(row=row_no, code=code, name=name, success=False, message=f"条码已存在: {barcode}")
-                )
-                continue
-
-            category = await self._resolve_category(to_str(item.get("分类名称")))
-            unit = await self._resolve_unit(to_str(item.get("单位名称")))
-            stock_lower = to_float(item.get("库存下限"))
-            stock_upper = to_float(item.get("库存上限"))
-            if stock_lower > stock_upper:
-                result.rows.append(
-                    GoodsImportRow(row=row_no, code=code, name=name, success=False, message="库存下限不能大于上限")
-                )
-                continue
-
-            final_code = code or await self._next_code()
-            goods = BdGoods(
-                code=final_code,
-                name=name,
-                category_id=category.id if category else None,
-                spec=to_str(item.get("规格")) or None,
-                unit_id=unit.id if unit else None,
-                barcode=barcode or None,
-                cost_price=to_float(item.get("成本价")),
-                sale_price=to_float(item.get("售价")),
-                stock_lower=stock_lower,
-                stock_upper=stock_upper,
-                status=1,
-                remark=to_str(item.get("备注")) or None,
-            )
-            self.db.add(goods)
-            await self.db.flush()
-            seen_codes.add(final_code)
-            if barcode:
-                seen_barcodes.add(barcode)
-            result.success += 1
-
-        await self.db.commit()
-        result.failed = result.total - result.success
-        return result
-
-    async def _resolve_category(self, name: str) -> BdGoodsCategory | None:
-        """按名称解析分类，不存在则创建。"""
-        if not name:
-            return None
-        category = await self.categories.get_by_name(name, None)
-        if category is None:
-            category = await self.categories.add(BdGoodsCategory(name=name, sort=0))
-        return category
-
-    async def _resolve_unit(self, name: str) -> BdUnit | None:
-        """按名称解析单位，不存在则创建。"""
-        if not name:
-            return None
-        unit = await self.units.get_by_name(name)
-        if unit is None:
-            unit = await self.units.add(BdUnit(name=name, precision=0))
-        return unit
 
     async def _relation_names(self, goods: BdGoods) -> tuple[str | None, str | None]:
         category_name = None
@@ -310,12 +181,28 @@ class GoodsCategoryService:
         self.categories = GoodsCategoryRepository(db)
 
     async def list_categories(self, query: GoodsCategoryQuery) -> list[GoodsCategoryOut]:
+        """返回全部分类并附带子分类/商品引用计数，前端据此构建树并禁用删除。"""
         rows = await self.categories.list_categories(query.keyword)
-        return [GoodsCategoryOut.model_validate(row) for row in rows]
+        children_map = await self.categories.children_count_map()
+        goods_map = await self.categories.goods_count_map()
+        return [
+            GoodsCategoryOut.model_validate(row).model_copy(
+                update={
+                    "children_count": children_map.get(row.id, 0),
+                    "goods_count": goods_map.get(row.id, 0),
+                }
+            )
+            for row in rows
+        ]
 
     async def get_category(self, category_id: int) -> GoodsCategoryOut:
         category = await self._get_active(category_id)
-        return GoodsCategoryOut.model_validate(category)
+        return GoodsCategoryOut.model_validate(category).model_copy(
+            update={
+                "children_count": await self.categories.count_children(category_id),
+                "goods_count": await self.categories.count_goods(category_id),
+            }
+        )
 
     async def create_category(self, payload: GoodsCategoryCreate) -> GoodsCategoryOut:
         name = payload.name.strip()
@@ -351,23 +238,42 @@ class GoodsCategoryService:
             setattr(category, field, value)
         await self.db.commit()
         await self.db.refresh(category)
-        return GoodsCategoryOut.model_validate(category)
+        return GoodsCategoryOut.model_validate(category).model_copy(
+            update={
+                "children_count": await self.categories.count_children(category_id),
+                "goods_count": await self.categories.count_goods(category_id),
+            }
+        )
 
     async def delete_category(self, category_id: int) -> None:
+        """软删除分类；存在子分类或商品引用时返回 409，避免破坏层级与历史数据。"""
         category = await self._get_active(category_id)
         if await self.categories.count_children(category_id) > 0:
-            raise AppException(ErrorCode.BAD_REQUEST, "该分类下存在子分类，无法删除")
+            raise AppException(ErrorCode.CONFLICT, "该分类下存在子分类，无法删除")
         if await self.categories.count_goods(category_id) > 0:
-            raise AppException(ErrorCode.BAD_REQUEST, "该分类下存在商品，无法删除")
+            raise AppException(ErrorCode.CONFLICT, "该分类下存在商品，无法删除")
         category.is_deleted = True
         await self.db.commit()
 
     async def _ensure_parent(self, parent_id: int, self_id: int | None) -> None:
+        """校验上级分类存在且不会形成环（不能把自身或自身的后代设为上级）。"""
         parent = await self.categories.get(parent_id)
         if parent is None or parent.is_deleted:
             raise AppException(ErrorCode.BAD_REQUEST, "上级分类不存在")
-        if self_id is not None and parent.id == self_id:
-            raise AppException(ErrorCode.BAD_REQUEST, "上级分类不能是自身")
+        if self_id is None:
+            return
+        # 沿 parent 链向上遍历，命中自身说明目标上级是自身的后代，会造成循环引用
+        current: BdGoodsCategory | None = parent
+        visited: set[int] = set()
+        while current is not None and current.id not in visited:
+            if current.id == self_id:
+                raise AppException(ErrorCode.BAD_REQUEST, "上级分类不能是自身或其下级")
+            visited.add(current.id)
+            current = (
+                await self.categories.get(current.parent_id)
+                if current.parent_id is not None
+                else None
+            )
 
     async def _get_active(self, category_id: int) -> BdGoodsCategory:
         category = await self.categories.get(category_id)
@@ -384,12 +290,21 @@ class UnitService:
         self.units = UnitRepository(db)
 
     async def list_units(self, query: UnitQuery) -> list[UnitOut]:
+        """返回全部单位并附带商品引用数量，前端据此禁用删除按钮。"""
         rows = await self.units.list_units(query.keyword)
-        return [UnitOut.model_validate(row) for row in rows]
+        goods_map = await self.units.goods_count_map()
+        return [
+            UnitOut.model_validate(row).model_copy(
+                update={"goods_count": goods_map.get(row.id, 0)}
+            )
+            for row in rows
+        ]
 
     async def get_unit(self, unit_id: int) -> UnitOut:
         unit = await self._get_active(unit_id)
-        return UnitOut.model_validate(unit)
+        return UnitOut.model_validate(unit).model_copy(
+            update={"goods_count": await self.units.count_goods(unit_id)}
+        )
 
     async def create_unit(self, payload: UnitCreate) -> UnitOut:
         name = payload.name.strip()
@@ -416,9 +331,10 @@ class UnitService:
         return UnitOut.model_validate(unit)
 
     async def delete_unit(self, unit_id: int) -> None:
+        """软删除单位；被商品引用时返回 409，避免历史单据数量单位失效。"""
         unit = await self._get_active(unit_id)
         if await self.units.count_goods(unit_id) > 0:
-            raise AppException(ErrorCode.BAD_REQUEST, "该单位下存在商品，无法删除")
+            raise AppException(ErrorCode.CONFLICT, "该单位下存在商品，无法删除")
         unit.is_deleted = True
         await self.db.commit()
 

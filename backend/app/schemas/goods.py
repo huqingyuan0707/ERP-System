@@ -37,7 +37,7 @@ class GoodsCategoryUpdate(BaseModel):
 
 
 class GoodsCategoryOut(BaseModel):
-    """商品分类出参。"""
+    """商品分类出参，附带引用计数供前端禁用删除按钮。"""
 
     model_config = ConfigDict(
         from_attributes=True, alias_generator=to_camel, populate_by_name=True
@@ -49,6 +49,9 @@ class GoodsCategoryOut(BaseModel):
     sort: int = 0
     remark: str | None = None
     created_at: datetime | None = None
+    # 子分类数量与关联商品数量：>0 时分类不可删除
+    children_count: int = 0
+    goods_count: int = 0
 
 
 class GoodsCategoryQuery(PageQuery):
@@ -64,7 +67,8 @@ class UnitBase(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     name: str = Field(min_length=1, max_length=32)
-    precision: int = Field(default=0, ge=0, le=6)
+    # 精度为数量保留的小数位，需求约定 0-4 位
+    precision: int = Field(default=0, ge=0, le=4)
     remark: str | None = Field(default=None, max_length=255)
 
 
@@ -78,7 +82,7 @@ class UnitUpdate(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     name: str | None = Field(default=None, min_length=1, max_length=32)
-    precision: int | None = Field(default=None, ge=0, le=6)
+    precision: int | None = Field(default=None, ge=0, le=4)
     remark: str | None = Field(default=None, max_length=255)
 
 
@@ -94,6 +98,8 @@ class UnitOut(BaseModel):
     precision: int = 0
     remark: str | None = None
     created_at: datetime | None = None
+    # 引用该单位的商品数量：>0 时单位不可删除
+    goods_count: int = 0
 
 
 class UnitQuery(PageQuery):
@@ -178,24 +184,22 @@ class GoodsQuery(PageQuery):
     status: int | None = None
 
 
-class GoodsImportRow(BaseModel):
-    """商品导入单行结果。"""
+class GoodsImportErrorItem(BaseModel):
+    """导入错误行：row 为 Excel 行号，errors 为该行全部校验失败原因。"""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
     row: int
-    code: str | None = None
-    name: str | None = None
-    success: bool
-    message: str | None = None
+    errors: list[str] = Field(default_factory=list)
 
 
 class GoodsImportResult(BaseModel):
-    """商品导入结果统计。"""
+    """商品导入结果：全部校验通过才入库，任一错误行则 success=False 且 0 行入库。"""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
+    success: bool = False
     total: int = 0
-    success: int = 0
-    failed: int = 0
-    rows: list[GoodsImportRow] = Field(default_factory=list)
+    success_count: int = 0
+    fail_count: int = 0
+    errors: list[GoodsImportErrorItem] = Field(default_factory=list)

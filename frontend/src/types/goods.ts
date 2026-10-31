@@ -9,6 +9,10 @@ export interface GoodsCategory {
   sort: number
   remark: string | null
   createdAt: string | null
+  /** 子分类数量：>0 时分类不可删除（后端同步返回） */
+  childrenCount: number
+  /** 关联商品数量：>0 时分类不可删除 */
+  goodsCount: number
 }
 
 export interface GoodsCategoryPayload {
@@ -21,9 +25,12 @@ export interface GoodsCategoryPayload {
 export interface Unit {
   id: number
   name: string
+  /** 数量保留的小数位（0-4） */
   precision: number
   remark: string | null
   createdAt: string | null
+  /** 引用该单位的商品数量：>0 时不可删除 */
+  goodsCount: number
 }
 
 export interface UnitPayload {
@@ -72,4 +79,19 @@ export type GoodsUpdatePayload = Partial<GoodsCreatePayload>
 export interface GoodsQuery extends PageQuery {
   categoryId?: number | null
   status?: number | null
+}
+
+/** 导入错误行：row 为 Excel 行号，errors 为该行全部校验失败原因。 */
+export interface GoodsImportError {
+  row: number
+  errors: string[]
+}
+
+/** 导入结果：success=false 表示整批未入库，errors 为逐行错误报告。 */
+export interface GoodsImportResult {
+  success: boolean
+  total: number
+  successCount: number
+  failCount: number
+  errors: GoodsImportError[]
 }

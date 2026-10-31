@@ -17,6 +17,15 @@ class TaskRepository(BaseRepository[SysTask]):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_file_name(self, file_name: str) -> SysTask | None:
+        """按导出文件名查询任务，用于下载时校验归属与权限。"""
+        from sqlalchemy import select
+
+        # file_path 由 pathlib 拼接，Windows 下分隔符为反斜杠，用后缀匹配兼容两种系统
+        stmt = select(SysTask).where(SysTask.file_path.like(f"%{file_name}"))
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def list_with_filter(
         self,
         task_type: str | None,
