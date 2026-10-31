@@ -127,16 +127,50 @@ jobs:
             echo "- Tag       : ${ACR_TAG}"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: 预检 ACR 网络连通性
+        env:
+          ACR_HOST: ${{ steps.acr.outputs.host }}
+        run: |
+          set -uo pipefail
+          # docker daemon 访问 ACR 偶发 TLS 握手超时（跨境网络抖动），先带重试地探测 /v2/
+          ok=""
+          for i in 1 2 3; do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 15 --max-time 30 "https://${ACR_HOST}/v2/" 2>&1)" && ok="$code" && break
+            echo "第 ${i} 次探测 ${ACR_HOST} 失败：${code}"
+            sleep $((i * 10))
+          done
+          if [ -z "${ok}" ]; then
+            echo "::error::无法连接 ACR：${ACR_HOST}"
+            echo "排查顺序："
+            echo "1) 报 TLS handshake timeout 说明 runner 到 ACR 的网络不通或抖动，换更近 ACR 区域的 runner（自托管/国内节点）最直接"
+            echo "2) 为 runner 配置 HTTPS_PROXY 后重试"
+            echo "3) 确认 ACR 域名与凭证区域一致（凭证是区域级的，跨区域会超时或 denied）"
+            exit 1
+          fi
+          echo "ACR /v2/ 探测结果：HTTP ${ok}（401 表示需要认证，属正常）"
+
       - name: 登录阿里云 ACR
         env:
           ACR_HOST: ${{ steps.acr.outputs.host }}
           ACR_USER: ${{ secrets.ACR_USERNAME }}
+          DOCKER_CLIENT_TIMEOUT: 120
         run: |
           set -euo pipefail
           # 用户名可能带尾随换行（Secret 粘贴常见问题），登录前清洗
           user="$(printf '%s' "$ACR_USER" | tr -d '[:space:]')"
           echo "登录 ACR：host=${ACR_HOST}, 用户名长度=${#user}"
-          printf '%s' "$ACR_PASSWORD" | tr -d '\r\n' | docker login "$ACR_HOST" --username "$user" --password-stdin
+          # daemon 侧 TLS 握手超时属于网络抖动，重试即可自愈；连续失败才是配置问题
+          for i in 1 2 3; do
+            if printf '%s' "$ACR_PASSWORD" | tr -d '\r\n' | docker login "$ACR_HOST" --username "$user" --password-stdin; then
+              echo "登录 ACR 成功"
+              exit 0
+            fi
+            echo "登录失败（第 ${i} 次），$((i * 15)) 秒后重试 ..."
+            sleep $((i * 15))
+          done
+          echo "::error::docker login 连续 3 次失败"
+          echo "排查顺序：1) ACR_USERNAME 是否为「访问凭证」中的用户名；2) ACR_PASSWORD 是否正确/已过期；3) 网络或区域是否与 ACR 一致"
+          exit 1
 
       - name: 预检镜像仓库是否可访问
         env:

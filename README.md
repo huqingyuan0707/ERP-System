@@ -241,6 +241,7 @@ bash scripts/check-acr.sh registry.cn-hangzhou.aliyuncs.com/erp-prod 1234567890 
 | `unauthorized: incorrect username or password` | 用户名/密码填错 | 使用 ACR「访问凭证」的用户名与固定密码 |
 | `denied`（pull 阶段） | 服务器未登录 ACR | 确认 `.acr.env` 存在且 `scripts/update.sh` 已执行登录 |
 | `manifest unknown` | 仓库里还没有该 tag | 先成功 push，再拉取；或手动触发一次流水线 |
+| `net/http: TLS handshake timeout`（login/push 阶段） | runner 到 ACR 的网络不通或抖动，daemon 的 TLS 握手超时 | 流水线已内置重试；仍失败则换更近 ACR 区域的 runner（自托管/国内节点）或为 runner 配置 `HTTPS_PROXY`；同时确认 ACR 域名与凭证区域一致 |
 
 ### 五、手动触发与自定义 tag
 
