@@ -28,7 +28,6 @@ jobs:
     outputs:
       host: ${{ steps.acr.outputs.host }}
       namespace: ${{ steps.push-backend.outputs.namespace }}
-      user: ${{ steps.acr.outputs.user }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -121,7 +120,6 @@ jobs:
 
           echo "host=${host}" >> "$GITHUB_OUTPUT"
           echo "candidates=${candidates}" >> "$GITHUB_OUTPUT"
-          echo "user=${user}" >> "$GITHUB_OUTPUT"
           {
             echo "### ACR 配置"
             echo "- Registry  : ${host}"
@@ -132,10 +130,13 @@ jobs:
       - name: 登录阿里云 ACR
         env:
           ACR_HOST: ${{ steps.acr.outputs.host }}
-          ACR_USER: ${{ steps.acr.outputs.user }}
+          ACR_USER: ${{ secrets.ACR_USERNAME }}
         run: |
           set -euo pipefail
-          echo "$ACR_PASSWORD" | docker login "$ACR_HOST" --username "$ACR_USER" --password-stdin
+          # 用户名可能带尾随换行（Secret 粘贴常见问题），登录前清洗
+          user="$(printf '%s' "$ACR_USER" | tr -d '[:space:]')"
+          echo "登录 ACR：host=${ACR_HOST}, 用户名长度=${#user}"
+          printf '%s' "$ACR_PASSWORD" | tr -d '\r\n' | docker login "$ACR_HOST" --username "$user" --password-stdin
 
       - name: 预检镜像仓库是否可访问
         env:
@@ -251,7 +252,7 @@ jobs:
           } >> "$GITHUB_ENV"
         env:
           ACR_REGISTRY: ${{ needs.build-and-push.outputs.host }}/${{ needs.build-and-push.outputs.namespace }}
-          ACR_USERNAME: ${{ needs.build-and-push.outputs.user }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
 
       - name: SSH 登录服务器并拉取运行
@@ -263,9 +264,10 @@ jobs:
           script: |
             set -euo pipefail
             cd /root/erp
-            registry="$(printf '%s' '${{ env.acr_registry_b64 }}' | base64 -d)"
-            username="$(printf '%s' '${{ env.acr_user_b64 }}' | base64 -d)"
-            password="$(printf '%s' '${{ env.acr_pass_b64 }}' | base64 -d)"
+            registry="$(printf '%s' '${{ env.acr_registry_b64 }}' | base64 -d | tr -d '[:space:]')"
+            username="$(printf '%s' '${{ env.acr_user_b64 }}' | base64 -d | tr -d '[:space:]')"
+            password="$(printf '%s' '${{ env.acr_pass_b64 }}' | base64 -d | tr -d '\r\n')"
+            echo "服务器端 ACR 配置：registry=${registry}, 用户名长度=${#username}, 密码长度=${#password}"
 
             # ACR_REGISTRY 非敏感：写进 .env，供 docker-compose 拼出镜像名
             if grep -q '^ACR_REGISTRY=' .env; then
