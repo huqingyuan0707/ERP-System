@@ -98,13 +98,19 @@ const fetchRoles = async (): Promise<void> => {
   loading.value = true
   try {
     roles.value = await getRoleList()
+  } catch {
+    roles.value = []
   } finally {
     loading.value = false
   }
 }
 
 const fetchDepts = async (): Promise<void> => {
-  depts.value = await getDeptList()
+  try {
+    depts.value = await getDeptList()
+  } catch {
+    depts.value = []
+  }
 }
 
 // ---------- 角色 CRUD ----------
@@ -181,109 +187,116 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-card">
-    <div class="toolbar">
-      <el-button v-perm="'sys:role:add'" type="primary" :icon="'Plus'" @click="openCreate">
-        新增角色
-      </el-button>
+  <div class="page-container">
+    <div class="page-card">
+      <div class="page-header">
+        <h1 class="page-title">角色权限</h1>
+        <p class="page-subtitle">维护系统角色、数据范围，用于按钮级与数据级权限控制。</p>
+      </div>
+
+      <div class="toolbar">
+        <el-button v-perm="'sys:role:add'" type="primary" :icon="'Plus'" @click="openCreate">
+          新增角色
+        </el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="roles" border stripe>
+        <el-table-column prop="code" label="编码" width="160" />
+        <el-table-column prop="name" label="名称" width="200" />
+        <el-table-column label="数据范围" min-width="220">
+          <template #default="{ row }">
+            <el-tag :type="scopeTagType(row.dataScope)" size="small">
+              {{ scopeLabel(row.dataScope) }}
+            </el-tag>
+            <span v-if="row.dataScope === DATA_SCOPE_DEPT && row.deptIds.length > 0" class="dept-count">
+              自定义 {{ row.deptIds.length }} 个部门
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+              {{ row.status === 1 ? '启用' : '停用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="remark" label="备注" min-width="200" show-overflow-tooltip />
+        <el-table-column label="操作" width="280" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button v-perm="'sys:role:edit'" link type="primary" @click="openEdit(row)">
+              编辑
+            </el-button>
+            <el-button v-perm="'sys:role:assign'" link type="warning" @click="openScope(row)">
+              数据范围
+            </el-button>
+            <el-button
+              v-if="row.code !== 'admin'"
+              v-perm="'sys:role:delete'"
+              link
+              type="danger"
+              @click="handleDelete(row)"
+            >
+              删除
+            </el-button>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="暂无角色数据" />
+        </template>
+      </el-table>
+
+      <el-dialog
+        v-model="dialogVisible"
+        :title="dialogMode === 'create' ? '新增角色' : '编辑角色'"
+        width="600px"
+        destroy-on-close
+      >
+        <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
+          <el-form-item label="角色编码" prop="code">
+            <el-input v-model="form.code" :disabled="dialogMode === 'edit'" placeholder="如 purchase_manager" maxlength="64" />
+          </el-form-item>
+          <el-form-item label="角色名称" prop="name">
+            <el-input v-model="form.name" placeholder="如 采购经理" maxlength="64" />
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="form.remark" type="textarea" :rows="3" maxlength="255" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="submitting" @click="handleSubmit">保存</el-button>
+        </template>
+      </el-dialog>
+
+      <el-dialog v-model="scopeDialogVisible" :title="`数据范围 — ${scopeRoleName}`" width="600px" destroy-on-close>
+        <el-form label-width="110px">
+          <el-form-item label="数据范围">
+            <el-radio-group v-model="scopeForm.dataScope">
+              <el-radio v-for="opt in SCOPE_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="scopeForm.dataScope === DATA_SCOPE_DEPT" label="自定义部门">
+            <el-tree-select
+              v-model="scopeForm.deptIds"
+              :data="deptTree"
+              multiple
+              check-strictly
+              collapse-tags
+              collapse-tags-tooltip
+              placeholder="叠加到本部门范围，可多选"
+              style="width: 100%"
+            />
+            <div class="scope-tip">勾选的部门（含其子部门）会叠加到「本部门」可见范围内。</div>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="scopeDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="scopeSubmitting" @click="handleScopeSubmit">保存</el-button>
+        </template>
+      </el-dialog>
     </div>
-
-    <el-table v-loading="loading" :data="roles" border stripe>
-      <el-table-column prop="code" label="编码" width="140" />
-      <el-table-column prop="name" label="名称" width="160" />
-      <el-table-column label="数据范围" min-width="180">
-        <template #default="{ row }">
-          <el-tag :type="scopeTagType(row.dataScope)" size="small">
-            {{ scopeLabel(row.dataScope) }}
-          </el-tag>
-          <span v-if="row.dataScope === DATA_SCOPE_DEPT && row.deptIds.length > 0" class="dept-count">
-            自定义 {{ row.deptIds.length }} 个部门
-          </span>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="80" align="center">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
-            {{ row.status === 1 ? '启用' : '停用' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
-      <el-table-column label="操作" width="220" fixed="right" align="center">
-        <template #default="{ row }">
-          <el-button v-perm="'sys:role:edit'" link type="primary" @click="openEdit(row)">
-            编辑
-          </el-button>
-          <el-button v-perm="'sys:role:assign'" link type="warning" @click="openScope(row)">
-            数据范围
-          </el-button>
-          <el-button
-            v-if="row.code !== 'admin'"
-            v-perm="'sys:role:delete'"
-            link
-            type="danger"
-            @click="handleDelete(row)"
-          >
-            删除
-          </el-button>
-        </template>
-      </el-table-column>
-      <template #empty>
-        <el-empty description="暂无角色数据" />
-      </template>
-    </el-table>
-
-    <el-dialog
-      v-model="dialogVisible"
-      :title="dialogMode === 'create' ? '新增角色' : '编辑角色'"
-      width="480px"
-      destroy-on-close
-    >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
-        <el-form-item label="角色编码" prop="code">
-          <el-input v-model="form.code" :disabled="dialogMode === 'edit'" placeholder="如 purchase_manager" maxlength="64" />
-        </el-form-item>
-        <el-form-item label="角色名称" prop="name">
-          <el-input v-model="form.name" placeholder="如 采购经理" maxlength="64" />
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="form.remark" type="textarea" :rows="2" maxlength="255" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="handleSubmit">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="scopeDialogVisible" :title="`数据范围 — ${scopeRoleName}`" width="480px" destroy-on-close>
-      <el-form label-width="90px">
-        <el-form-item label="数据范围">
-          <el-radio-group v-model="scopeForm.dataScope">
-            <el-radio v-for="opt in SCOPE_OPTIONS" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item v-if="scopeForm.dataScope === DATA_SCOPE_DEPT" label="自定义部门">
-          <el-tree-select
-            v-model="scopeForm.deptIds"
-            :data="deptTree"
-            multiple
-            check-strictly
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="叠加到本部门范围，可多选"
-            style="width: 100%"
-          />
-          <div class="scope-tip">勾选的部门（含其子部门）会叠加到「本部门」可见范围内。</div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="scopeDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="scopeSubmitting" @click="handleScopeSubmit">保存</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 

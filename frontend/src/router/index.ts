@@ -80,6 +80,13 @@ const router = createRouter({
   routes,
 })
 
+/** 捕获并忽略 Vue Router 路由未匹配警告，避免控制台噪音。 */
+router.onError((error) => {
+  if (error.message?.includes('No match found')) {
+    return
+  }
+})
+
 /** 动态路由是否已按当前用户菜单注册（登出后重置）。 */
 let menuRoutesAdded = false
 

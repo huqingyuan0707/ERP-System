@@ -40,6 +40,7 @@ const query = reactive<UserQuery>({
 })
 
 // ---------- 部门树（扁平行转树） ----------
+/** 由部门列表构建树形结构，供左侧筛选树与抽屉内的部门选择器共用。 */
 const deptTree = computed<DeptNode[]>(() => {
   const nodeMap = new Map<number, DeptNode>()
   const roots: DeptNode[] = []
@@ -59,18 +60,21 @@ const deptTree = computed<DeptNode[]>(() => {
   return roots
 })
 
+/** 部门 id → 部门名；查不到时回退显示 id，避免表格出现空白。 */
 const deptName = (deptId: number | null): string => {
   if (deptId === null) return '-'
   const hit = depts.value.find((dept) => dept.id === deptId)
   return hit?.name ?? String(deptId)
 }
 
+/** 角色 id 列表 → 角色名（顿号分隔）；无角色时显示 '-'。 */
 const roleNames = (roleIds: number[]): string => {
   if (roleIds.length === 0) return '-'
   const map = new Map(roles.value.map((role) => [role.id, role.name]))
   return roleIds.map((id) => map.get(id) ?? String(id)).join('、')
 }
 
+/** ISO 时间串 → 本地时间「YYYY-MM-DD HH:mm:ss」；空值显示 '-'。 */
 const formatDateTime = (value: string | null): string => {
   if (!value) return '-'
   const date = new Date(value)
@@ -83,6 +87,12 @@ const formatDateTime = (value: string | null): string => {
 }
 
 // ---------- 保护规则：不能删除/禁用自己与内置 admin ----------
+/**
+ * 是否为受保护账号。
+ *
+ * 当前登录用户与内置 admin 不允许被停用或删除（后端同样返回 400），
+ * 前端提前禁用按钮，避免用户点击后才看到报错。
+ */
 const isProtected = (row: User): boolean =>
   row.id === userStore.user?.id || row.username === 'admin'
 
@@ -119,6 +129,11 @@ const createEmptyForm = (): UserForm => ({
 })
 const form = reactive<UserForm>(createEmptyForm())
 
+/**
+ * 表单校验规则。
+ *
+ * 初始密码仅在新增时必填；编辑态不暴露密码字段（改密走「重置密码」入口）。
+ */
 const rules = computed<FormRules<UserForm>>(() => ({
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password:
@@ -131,6 +146,7 @@ const rules = computed<FormRules<UserForm>>(() => ({
 }))
 
 // ---------- 列表 ----------
+/** 拉取当前查询条件下的用户分页列表。 */
 const fetchList = async (): Promise<void> => {
   loading.value = true
   try {
@@ -142,17 +158,20 @@ const fetchList = async (): Promise<void> => {
   }
 }
 
+/** 加载部门与角色选项，供部门树、部门选择器、角色多选使用。 */
 const fetchOptions = async (): Promise<void> => {
   const [deptList, roleList] = await Promise.all([getDeptList(), getRoleList()])
   depts.value = deptList
   roles.value = roleList
 }
 
+/** 执行查询：回到第一页再取数。 */
 const handleSearch = (): void => {
   query.page = 1
   void fetchList()
 }
 
+/** 重置查询条件并恢复为「全部部门」。 */
 const handleReset = (): void => {
   query.keyword = ''
   query.status = null
@@ -162,23 +181,27 @@ const handleReset = (): void => {
   handleSearch()
 }
 
+/** 切换页码。 */
 const handlePageChange = (page: number): void => {
   query.page = page
   void fetchList()
 }
 
+/** 切换每页条数。 */
 const handleSizeChange = (size: number): void => {
   query.pageSize = size
   query.page = 1
   void fetchList()
 }
 
+/** 点击左侧部门节点：按部门筛选用户。 */
 const handleDeptSelect = (data: DeptNode | null): void => {
   currentDeptId.value = data?.value ?? null
   query.deptId = currentDeptId.value
   handleSearch()
 }
 
+/** 取消部门筛选，回到全部用户。 */
 const handleDeptClear = (): void => {
   currentDeptId.value = null
   treeRef.value?.setCurrentKey(null)
@@ -187,6 +210,7 @@ const handleDeptClear = (): void => {
 }
 
 // ---------- 新增 / 编辑 ----------
+/** 打开新增抽屉：清空表单，初始状态为启用。 */
 const openCreate = (): void => {
   drawerMode.value = 'create'
   editingId.value = null
@@ -195,6 +219,7 @@ const openCreate = (): void => {
   drawerVisible.value = true
 }
 
+/** 打开编辑抽屉：回显用户信息，受保护账号锁定状态开关。 */
 const openEdit = (row: User): void => {
   drawerMode.value = 'edit'
   editingId.value = row.id
@@ -213,6 +238,7 @@ const openEdit = (row: User): void => {
   drawerVisible.value = true
 }
 
+/** 提交表单：新增走 createUser，编辑走 updateUser（均为部分更新）。 */
 const handleSubmit = async (): Promise<void> => {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
@@ -251,6 +277,12 @@ const handleSubmit = async (): Promise<void> => {
 }
 
 // ---------- 行操作 ----------
+/**
+ * 启用/停用用户。
+ *
+ * 停用会让该账号立即无法登录、已签发的 Token 失效（后端递增 token_version），
+ * 因此先二次确认；受保护账号按钮已禁用。
+ */
 const handleToggleStatus = async (row: User): Promise<void> => {
   const disabling = row.status === 1
   const action = disabling ? '停用' : '启用'
@@ -266,6 +298,11 @@ const handleToggleStatus = async (row: User): Promise<void> => {
   void fetchList()
 }
 
+/**
+ * 重置用户密码。
+ *
+ * 留空则使用后端默认密码 123456；重置后该账号原有登录态全部失效。
+ */
 const handleResetPassword = async (row: User): Promise<void> => {
   const { value } = await ElMessageBox.prompt(
     '留空则重置为默认密码 123456',
@@ -282,6 +319,7 @@ const handleResetPassword = async (row: User): Promise<void> => {
   ElMessage.success('密码已重置，该账号原有登录态已失效')
 }
 
+/** 删除用户（后端为软删除，历史单据仍可追溯该用户）。 */
 const handleDelete = async (row: User): Promise<void> => {
   await ElMessageBox.confirm(
     `确定删除用户「${row.username}」吗？删除后账号不可登录，历史数据仍保留。`,
@@ -300,230 +338,222 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-container">
-    <div class="page-card">
-      <div class="page-header">
-        <h1 class="page-title">用户管理</h1>
-        <p class="page-subtitle">维护系统用户及部门、角色、岗位信息；支持启用/停用与重置密码。</p>
+  <div class="user-page">
+    <div class="page-card dept-pane">
+      <div class="pane-header">
+        <span class="pane-title">部门</span>
+        <el-button
+          link
+          type="primary"
+          size="small"
+          :disabled="currentDeptId === null"
+          @click="handleDeptClear"
+        >
+          全部
+        </el-button>
       </div>
-
-      <div class="user-page">
-        <div class="page-card dept-pane">
-          <div class="pane-header">
-            <span class="pane-title">部门</span>
-            <el-button
-              link
-              type="primary"
-              size="small"
-              :disabled="currentDeptId === null"
-              @click="handleDeptClear"
-            >
-              全部
-            </el-button>
-          </div>
-          <el-tree
-            ref="treeRef"
-            class="dept-tree"
-            :data="deptTree"
-            node-key="value"
-            highlight-current
-            default-expand-all
-            :expand-on-click-node="false"
-            @current-change="handleDeptSelect"
-          />
-        </div>
-
-        <div class="page-card list-pane">
-          <el-form :inline="true" class="query-form" @submit.prevent="handleSearch">
-            <el-form-item label="关键字">
-              <el-input
-                v-model="query.keyword"
-                placeholder="用户名 / 姓名 / 手机号"
-                clearable
-                :style="{ width: '260px' }"
-                @keyup.enter="handleSearch"
-              />
-            </el-form-item>
-            <el-form-item label="状态">
-              <el-select v-model="query.status" placeholder="全部" clearable :style="{ width: '160px' }">
-                <el-option label="启用" :value="1" />
-                <el-option label="停用" :value="0" />
-              </el-select>
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" :icon="'Search'" @click="handleSearch">查询</el-button>
-              <el-button :icon="'Refresh'" @click="handleReset">重置</el-button>
-            </el-form-item>
-          </el-form>
-
-          <div class="toolbar">
-            <el-button v-perm="'sys:user:add'" type="primary" :icon="'Plus'" @click="openCreate">
-              新增用户
-            </el-button>
-          </div>
-
-          <el-table v-loading="loading" :data="rows" border stripe>
-            <el-table-column prop="username" label="用户名" width="140" show-overflow-tooltip />
-            <el-table-column prop="realName" label="姓名" width="120" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.realName ?? '-' }}</template>
-            </el-table-column>
-            <el-table-column label="手机号" width="150">
-              <template #default="{ row }">{{ row.mobile ?? '-' }}</template>
-            </el-table-column>
-            <el-table-column label="部门" width="140" show-overflow-tooltip>
-              <template #default="{ row }">{{ deptName(row.deptId) }}</template>
-            </el-table-column>
-            <el-table-column label="岗位" width="120">
-              <template #default="{ row }">{{ row.position ?? '-' }}</template>
-            </el-table-column>
-            <el-table-column label="角色" min-width="180" show-overflow-tooltip>
-              <template #default="{ row }">{{ roleNames(row.roleIds) }}</template>
-            </el-table-column>
-            <el-table-column label="状态" width="100" align="center">
-              <template #default="{ row }">
-                <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
-                  {{ row.status === 1 ? '启用' : '停用' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="最后登录" width="190">
-              <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="300" fixed="right" align="center">
-              <template #default="{ row }">
-                <el-button v-perm="'sys:user:edit'" link type="primary" @click="openEdit(row)">
-                  编辑
-                </el-button>
-                <el-button
-                  v-perm="'sys:user:reset'"
-                  link
-                  type="warning"
-                  @click="handleResetPassword(row)"
-                >
-                  重置密码
-                </el-button>
-                <el-button
-                  v-perm="'sys:user:edit'"
-                  link
-                  :type="row.status === 1 ? 'danger' : 'success'"
-                  :disabled="isProtected(row)"
-                  @click="handleToggleStatus(row)"
-                >
-                  {{ row.status === 1 ? '停用' : '启用' }}
-                </el-button>
-                <el-button
-                  v-perm="'sys:user:delete'"
-                  link
-                  type="danger"
-                  :disabled="isProtected(row)"
-                  @click="handleDelete(row)"
-                >
-                  删除
-                </el-button>
-              </template>
-            </el-table-column>
-            <template #empty>
-              <el-empty description="暂无用户数据" />
-            </template>
-          </el-table>
-
-          <div class="pager">
-            <el-pagination
-              :current-page="query.page"
-              :page-size="query.pageSize"
-              :page-sizes="[10, 20, 50, 100]"
-              :total="total"
-              layout="total, sizes, prev, pager, next, jumper"
-              @current-change="handlePageChange"
-              @size-change="handleSizeChange"
-            />
-          </div>
-        </div>
-      </div>
-
-      <el-drawer
-        v-model="drawerVisible"
-        :title="drawerMode === 'create' ? '新增用户' : `编辑用户 — ${form.username}`"
-        size="600px"
-        destroy-on-close
-      >
-        <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
-          <el-form-item label="用户名" prop="username">
-            <el-input
-              v-model="form.username"
-              :disabled="drawerMode === 'edit'"
-              placeholder="登录账号"
-              maxlength="64"
-            />
-          </el-form-item>
-          <el-form-item v-if="drawerMode === 'create'" label="初始密码" prop="password">
-            <el-input v-model="form.password" type="password" show-password placeholder="至少 6 位" maxlength="128" />
-          </el-form-item>
-          <el-form-item label="姓名">
-            <el-input v-model="form.realName" placeholder="真实姓名" maxlength="64" />
-          </el-form-item>
-          <el-form-item label="手机号">
-            <el-input v-model="form.mobile" placeholder="可选" maxlength="32" />
-          </el-form-item>
-          <el-form-item label="邮箱">
-            <el-input v-model="form.email" placeholder="可选" maxlength="128" />
-          </el-form-item>
-          <el-form-item label="部门">
-            <el-tree-select
-              v-model="form.deptId"
-              :data="deptTree"
-              check-strictly
-              clearable
-              placeholder="请选择部门"
-              style="width: 100%"
-            />
-          </el-form-item>
-          <el-form-item label="岗位">
-            <el-input v-model="form.position" placeholder="如 采购专员" maxlength="64" />
-          </el-form-item>
-          <el-form-item label="角色">
-            <el-select
-              v-model="form.roleIds"
-              multiple
-              collapse-tags
-              collapse-tags-tooltip
-              clearable
-              placeholder="可多选"
-              style="width: 100%"
-            >
-              <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="状态">
-            <el-radio-group v-model="form.status" :disabled="editingProtected">
-              <el-radio :value="1">启用</el-radio>
-              <el-radio :value="0">停用</el-radio>
-            </el-radio-group>
-            <div v-if="editingProtected" class="protected-tip">
-              内置管理员与当前登录账号不允许停用
-            </div>
-          </el-form-item>
-        </el-form>
-        <template #footer>
-          <el-button @click="drawerVisible = false">取消</el-button>
-          <el-button type="primary" :loading="submitting" @click="handleSubmit">保存</el-button>
-        </template>
-      </el-drawer>
+      <el-tree
+        ref="treeRef"
+        class="dept-tree"
+        :data="deptTree"
+        node-key="value"
+        highlight-current
+        default-expand-all
+        :expand-on-click-node="false"
+        @current-change="handleDeptSelect"
+      />
     </div>
+
+    <div class="page-card list-pane">
+      <el-form :inline="true" class="query-form" @submit.prevent="handleSearch">
+        <el-form-item label="关键字">
+          <el-input
+            v-model="query.keyword"
+            placeholder="用户名 / 姓名 / 手机号"
+            clearable
+            style="width: 200px"
+            @keyup.enter="handleSearch"
+          />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="query.status" placeholder="全部" clearable style="width: 120px">
+            <el-option label="启用" :value="1" />
+            <el-option label="停用" :value="0" />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :icon="'Search'" @click="handleSearch">查询</el-button>
+          <el-button :icon="'Refresh'" @click="handleReset">重置</el-button>
+        </el-form-item>
+      </el-form>
+
+      <div class="toolbar">
+        <el-button v-perm="'sys:user:add'" type="primary" :icon="'Plus'" @click="openCreate">
+          新增用户
+        </el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="rows" border stripe>
+        <el-table-column prop="username" label="用户名" width="120" show-overflow-tooltip />
+        <el-table-column prop="realName" label="姓名" width="100" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.realName ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column label="手机号" width="130">
+          <template #default="{ row }">{{ row.mobile ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column label="部门" width="110" show-overflow-tooltip>
+          <template #default="{ row }">{{ deptName(row.deptId) }}</template>
+        </el-table-column>
+        <el-table-column label="岗位" width="90">
+          <template #default="{ row }">{{ row.position ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column label="角色" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ roleNames(row.roleIds) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="70" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+              {{ row.status === 1 ? '启用' : '停用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="最后登录" width="160">
+          <template #default="{ row }">{{ formatDateTime(row.lastLoginAt) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="230" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button v-perm="'sys:user:edit'" link type="primary" @click="openEdit(row)">
+              编辑
+            </el-button>
+            <el-button
+              v-perm="'sys:user:reset'"
+              link
+              type="warning"
+              @click="handleResetPassword(row)"
+            >
+              重置密码
+            </el-button>
+            <el-button
+              v-perm="'sys:user:edit'"
+              link
+              :type="row.status === 1 ? 'danger' : 'success'"
+              :disabled="isProtected(row)"
+              @click="handleToggleStatus(row)"
+            >
+              {{ row.status === 1 ? '停用' : '启用' }}
+            </el-button>
+            <el-button
+              v-perm="'sys:user:delete'"
+              link
+              type="danger"
+              :disabled="isProtected(row)"
+              @click="handleDelete(row)"
+            >
+              删除
+            </el-button>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="暂无用户数据" />
+        </template>
+      </el-table>
+
+      <div class="pager">
+        <el-pagination
+          :current-page="query.page"
+          :page-size="query.pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="total"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="handlePageChange"
+          @size-change="handleSizeChange"
+        />
+      </div>
+    </div>
+
+    <el-drawer
+      v-model="drawerVisible"
+      :title="drawerMode === 'create' ? '新增用户' : `编辑用户 — ${form.username}`"
+      size="480px"
+      destroy-on-close
+    >
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
+        <el-form-item label="用户名" prop="username">
+          <el-input
+            v-model="form.username"
+            :disabled="drawerMode === 'edit'"
+            placeholder="登录账号"
+            maxlength="64"
+          />
+        </el-form-item>
+        <el-form-item v-if="drawerMode === 'create'" label="初始密码" prop="password">
+          <el-input v-model="form.password" type="password" show-password placeholder="至少 6 位" maxlength="128" />
+        </el-form-item>
+        <el-form-item label="姓名">
+          <el-input v-model="form.realName" placeholder="真实姓名" maxlength="64" />
+        </el-form-item>
+        <el-form-item label="手机号">
+          <el-input v-model="form.mobile" placeholder="可选" maxlength="32" />
+        </el-form-item>
+        <el-form-item label="邮箱">
+          <el-input v-model="form.email" placeholder="可选" maxlength="128" />
+        </el-form-item>
+        <el-form-item label="部门">
+          <el-tree-select
+            v-model="form.deptId"
+            :data="deptTree"
+            check-strictly
+            clearable
+            placeholder="请选择部门"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="岗位">
+          <el-input v-model="form.position" placeholder="如 采购专员" maxlength="64" />
+        </el-form-item>
+        <el-form-item label="角色">
+          <el-select
+            v-model="form.roleIds"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            clearable
+            placeholder="可多选"
+            style="width: 100%"
+          >
+            <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-radio-group v-model="form.status" :disabled="editingProtected">
+            <el-radio :value="1">启用</el-radio>
+            <el-radio :value="0">停用</el-radio>
+          </el-radio-group>
+          <div v-if="editingProtected" class="protected-tip">
+            内置管理员与当前登录账号不允许停用
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="drawerVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="handleSubmit">保存</el-button>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
 <style scoped>
 .user-page {
   display: flex;
-  gap: 20px;
+  gap: 12px;
   height: 100%;
   min-height: 0;
+  /* 窄视口下左侧部门树占 240px，右侧列表保底 520px，超出部分横向滚动 */
   overflow-x: auto;
 }
 
 .dept-pane {
-  width: 280px;
+  width: 240px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -531,7 +561,7 @@ onMounted(() => {
 
 .list-pane {
   flex: 1;
-  min-width: 600px;
+  min-width: 520px;
   display: flex;
   flex-direction: column;
 }
@@ -540,11 +570,11 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .pane-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: #303133;
 }

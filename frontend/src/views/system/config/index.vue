@@ -74,49 +74,56 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-card">
-    <el-alert
-      class="tip"
-      type="info"
-      :closable="false"
-      title="参数修改立即生效（带缓存）；单号规则格式为「前缀,序号宽度」，如 PO,4 表示前缀 PO、4 位流水号。"
-    />
+  <div class="page-container">
+    <div class="page-card">
+      <div class="page-header">
+        <h1 class="page-title">系统参数</h1>
+        <p class="page-subtitle">维护公司信息、编号规则等系统级参数；修改立即生效（带缓存）。</p>
+      </div>
 
-    <div class="toolbar">
-      <el-button
-        v-perm="'sys:config:edit'"
-        type="primary"
-        :icon="'Check'"
-        :loading="saving"
-        :disabled="dirtyKeys.length === 0"
-        @click="handleSave"
-      >
-        保存修改（{{ dirtyKeys.length }}）
-      </el-button>
-      <el-button :icon="'Refresh'" :disabled="dirtyKeys.length === 0" @click="resetDrafts">
-        撤销修改
-      </el-button>
-    </div>
+      <el-alert
+        class="tip"
+        type="info"
+        :closable="false"
+        title="单号规则格式为「前缀,序号宽度」，如 PO,4 表示前缀 PO、4 位流水号。"
+      />
 
-    <el-table v-loading="loading" :data="rows" border stripe :row-class-name="rowClassName">
-      <el-table-column prop="key" label="参数键" width="200" show-overflow-tooltip />
-      <el-table-column prop="name" label="参数名称" width="220" show-overflow-tooltip />
-      <el-table-column label="参数值" min-width="240">
-        <template #default="{ row }">
-          <el-input v-model="drafts[row.key]" :disabled="!canEdit" maxlength="2000" />
+      <div class="toolbar">
+        <el-button
+          v-perm="'sys:config:edit'"
+          type="primary"
+          :icon="'Check'"
+          :loading="saving"
+          :disabled="dirtyKeys.length === 0"
+          @click="handleSave"
+        >
+          保存修改（{{ dirtyKeys.length }}）
+        </el-button>
+        <el-button :icon="'Refresh'" :disabled="dirtyKeys.length === 0" @click="resetDrafts">
+          撤销修改
+        </el-button>
+      </div>
+
+      <el-table v-loading="loading" :data="rows" border stripe :row-class-name="rowClassName">
+        <el-table-column prop="key" label="参数键" width="240" show-overflow-tooltip />
+        <el-table-column prop="name" label="参数名称" width="280" show-overflow-tooltip />
+        <el-table-column label="参数值" min-width="400">
+          <template #default="{ row }">
+            <el-input v-model="drafts[row.key]" :disabled="!canEdit" maxlength="2000" />
+          </template>
+        </el-table-column>
+        <el-table-column prop="remark" label="说明" min-width="300" show-overflow-tooltip />
+        <template #empty>
+          <el-empty description="暂无系统参数" />
         </template>
-      </el-table-column>
-      <el-table-column prop="remark" label="说明" min-width="200" show-overflow-tooltip />
-      <template #empty>
-        <el-empty description="暂无系统参数" />
-      </template>
-    </el-table>
+      </el-table>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .tip {
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 :deep(.row-dirty) {

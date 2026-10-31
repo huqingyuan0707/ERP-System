@@ -40,28 +40,30 @@ const handleLogin = async (): Promise<void> => {
 
 <template>
   <div class="login-page">
-    <el-card class="login-card">
-      <h2 class="login-title">企业ERP系统</h2>
-      <el-form ref="formRef" :model="form" :rules="rules" size="large" @keyup.enter="handleLogin">
-        <el-form-item prop="username">
-          <el-input v-model="form.username" placeholder="用户名" :prefix-icon="'User'" />
-        </el-form-item>
-        <el-form-item prop="password">
-          <el-input
-            v-model="form.password"
-            type="password"
-            placeholder="密码"
-            show-password
-            :prefix-icon="'Lock'"
-          />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" class="login-btn" :loading="loading" @click="handleLogin">
-            登 录
-          </el-button>
-        </el-form-item>
-      </el-form>
-    </el-card>
+    <div class="login-wrapper">
+      <el-card class="login-card">
+        <div class="login-brand">企业ERP系统</div>
+        <el-form ref="formRef" :model="form" :rules="rules" size="large" @keyup.enter="handleLogin">
+          <el-form-item prop="username">
+            <el-input v-model="form.username" placeholder="用户名" :prefix-icon="'User'" />
+          </el-form-item>
+          <el-form-item prop="password">
+            <el-input
+              v-model="form.password"
+              type="password"
+              placeholder="密码"
+              show-password
+              :prefix-icon="'Lock'"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" class="login-btn" :loading="loading" @click="handleLogin">
+              登 录
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </el-card>
+    </div>
   </div>
 </template>
 
@@ -72,16 +74,37 @@ const handleLogin = async (): Promise<void> => {
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #1e3a5f 0%, #0f2438 100%);
+  padding: 40px;
+  box-sizing: border-box;
+}
+.login-wrapper {
+  width: 100%;
+  max-width: 460px;
+  display: flex;
+  justify-content: center;
 }
 .login-card {
-  width: 380px;
-  padding: 8px;
+  width: 420px;
+  padding: 32px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
 }
-.login-title {
+.login-brand {
   text-align: center;
-  margin: 8px 0 24px;
+  font-size: 26px;
+  font-weight: 700;
+  color: #fff;
+  margin: 0 0 8px 0;
+}
+.login-brand::after {
+  content: '· ERP';
+  font-size: 14px;
+  font-weight: 400;
+  opacity: 0.7;
+  margin-left: 4px;
 }
 .login-btn {
   width: 100%;
+  font-size: 16px;
+  padding: 10px 0;
 }
 </style>

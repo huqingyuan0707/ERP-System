@@ -4,6 +4,7 @@ import { computed, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 
+import TaskDrawer from '@/components/TaskDrawer.vue'
 import { useUserStore } from '@/stores/user'
 import { changePassword } from '@/api/auth'
 
@@ -131,6 +132,7 @@ const submitPwdChange = async (): Promise<void> => {
             </el-dropdown-menu>
           </template>
         </el-dropdown>
+        <TaskDrawer />
       </el-header>
       <el-main class="main">
         <RouterView />
@@ -182,11 +184,13 @@ const submitPwdChange = async (): Promise<void> => {
   overflow-x: hidden;
 }
 .logo {
-  height: 56px;
-  line-height: 56px;
+  height: 64px;
+  line-height: 64px;
   color: #fff;
   text-align: center;
-  font-size: 16px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 1px;
   white-space: nowrap;
 }
 .menu {
@@ -212,6 +216,8 @@ const submitPwdChange = async (): Promise<void> => {
   justify-content: space-between;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 21, 41, 0.08);
+  height: 60px;
+  padding: 0 24px;
 }
 .header-left {
   display: flex;
@@ -229,7 +235,8 @@ const submitPwdChange = async (): Promise<void> => {
   cursor: pointer;
 }
 .main {
-  padding: 16px;
+  /* 内容区留白：页面卡片与侧栏/顶栏之间保持 8px，避免卡片离边缘太远 */
+  padding: 8px;
   overflow-y: auto;
 }
 </style>

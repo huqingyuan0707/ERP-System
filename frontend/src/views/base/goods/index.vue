@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 商品管理页（BASE-04/05/06）。
- * 结构：查询表单 + 工具栏 + 表格 + 分页 + 新增/编辑弹窗。
+ * 结构：查询条件卡片 + 查询结果卡片（工具栏 + 表格 + 分页）+ 新增/编辑弹窗。
  */
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
@@ -9,13 +9,15 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import {
   createGoods,
   deleteGoods,
-  exportGoods,
   getCategories,
   getGoodsList,
   getUnits,
   updateGoods,
 } from '@/api/goods'
 import type { Goods, GoodsCategory, GoodsQuery, Unit } from '@/types/goods'
+import BaseCard from '@/components/BaseCard.vue'
+import ExportButton from '@/components/ExportButton.vue'
+import ImportDialog from '@/components/ImportDialog.vue'
 
 const loading = ref(false)
 const rows = ref<Goods[]>([])
@@ -32,6 +34,7 @@ const query = reactive<GoodsQuery>({
 })
 
 const dialogVisible = ref(false)
+const importDialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit'>('create')
 const submitting = ref(false)
 const formRef = ref<FormInstance>()
@@ -186,9 +189,8 @@ const handleDelete = async (row: Goods): Promise<void> => {
   void fetchList()
 }
 
-const handleExport = async (): Promise<void> => {
-  await exportGoods({ ...query, page: undefined, pageSize: undefined })
-  ElMessage.success('导出成功')
+const openImport = (): void => {
+  importDialogVisible.value = true
 }
 
 onMounted(() => {
@@ -198,101 +200,135 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-card">
-    <el-form :inline="true" class="query-form" @submit.prevent="handleSearch">
-      <el-form-item label="关键字">
-        <el-input
-          v-model="query.keyword"
-          placeholder="编码 / 名称 / 条码"
-          clearable
-          style="width: 200px"
-          @keyup.enter="handleSearch"
-        />
-      </el-form-item>
-      <el-form-item label="分类">
-        <el-select v-model="query.categoryId" placeholder="全部" clearable style="width: 140px">
-          <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="状态">
-        <el-select v-model="query.status" placeholder="全部" clearable style="width: 120px">
-          <el-option label="启用" :value="1" />
-          <el-option label="停用" :value="0" />
-        </el-select>
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" :icon="'Search'" @click="handleSearch">查询</el-button>
-        <el-button :icon="'Refresh'" @click="handleReset">重置</el-button>
-      </el-form-item>
-    </el-form>
+  <div class="page-container">
+    <!-- 卡片 1：查询条件。标题与副标题全部由 BaseCard 渲染，页面只提供表单内容 -->
+    <BaseCard
+      title="查询条件"
+      subtitle="维护商品基础档案，支持分类、单位、价格与库存范围设置。"
+    >
+      <el-form class="query-form" label-width="72px" @submit.prevent="handleSearch">
+        <!-- 筛选项每行最多 4 个（lg 断点下每列 span=6），窄屏自动降为 3/2/1 列 -->
+        <el-row :gutter="16">
+          <el-col :xs="24" :sm="12" :md="8" :lg="6">
+            <el-form-item label="关键字">
+              <el-input
+                v-model="query.keyword"
+                placeholder="编码 / 名称 / 条码"
+                clearable
+                @keyup.enter="handleSearch"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" :lg="6">
+            <el-form-item label="分类">
+              <el-select v-model="query.categoryId" placeholder="全部" clearable>
+                <el-option v-for="c in categories" :key="c.id" :label="c.name" :value="c.id" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :xs="24" :sm="12" :md="8" :lg="6">
+            <el-form-item label="状态">
+              <el-select v-model="query.status" placeholder="全部" clearable>
+                <el-option label="启用" :value="1" />
+                <el-option label="停用" :value="0" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+        </el-row>
 
-    <div class="toolbar">
-      <el-button
-        v-perm="'base:goods:add'"
-        type="primary"
-        :icon="'Plus'"
-        @click="openCreate"
-      >
-        新增商品
-      </el-button>
-      <el-button v-perm="'base:goods:export'" :icon="'Download'" @click="handleExport">
-        导出 Excel
-      </el-button>
-    </div>
+        <!-- 查询、重置与结果工具栏按钮统一收在查询卡片的最后一行 -->
+        <div class="query-actions">
+          <el-button type="primary" :icon="'Search'" @click="handleSearch">查询</el-button>
+          <el-button :icon="'Refresh'" @click="handleReset">重置</el-button>
+          <el-button
+            v-perm="'base:goods:add'"
+            type="primary"
+            :icon="'Plus'"
+            @click="openCreate"
+          >
+            新增商品
+          </el-button>
+          <ExportButton
+            v-perm="'base:goods:export'"
+            :params="{
+              keyword: query.keyword || undefined,
+              categoryId: query.categoryId,
+              status: query.status,
+            }"
+          >
+            导出 Excel
+          </ExportButton>
+          <el-button v-perm="'base:goods:import'" :icon="'Upload'" @click="openImport">
+            导入 Excel
+          </el-button>
+        </div>
+      </el-form>
+    </BaseCard>
 
-    <el-table v-loading="loading" :data="rows" border stripe>
-      <el-table-column prop="code" label="编码" width="110" />
-      <el-table-column prop="name" label="名称" min-width="140" />
-      <el-table-column prop="spec" label="规格" min-width="120" />
-      <el-table-column prop="categoryName" label="分类" width="110" />
-      <el-table-column prop="unitName" label="单位" width="80" />
-      <el-table-column prop="costPrice" label="成本价" width="100" align="right" />
-      <el-table-column prop="salePrice" label="销售价" width="100" align="right" />
-      <el-table-column label="库存范围" width="120" align="center">
-        <template #default="{ row }">{{ row.stockLower }} ~ {{ row.stockUpper }}</template>
-      </el-table-column>
-      <el-table-column label="状态" width="80" align="center">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
-            {{ row.status === 1 ? '启用' : '停用' }}
-          </el-tag>
+    <!-- 卡片 2：查询结果。工具栏已移到查询卡片末行，这里只保留标题、表格与分页 -->
+    <BaseCard
+      class="result-card"
+      title="查询结果"
+      body-padding="0"
+      show-divider
+      :loading="loading"
+    >
+      <el-table :data="rows" border stripe>
+        <el-table-column prop="code" label="编码" width="130" />
+        <el-table-column prop="name" label="名称" min-width="200" />
+        <el-table-column prop="spec" label="规格" min-width="160" />
+        <el-table-column prop="categoryName" label="分类" width="140" />
+        <el-table-column prop="unitName" label="单位" width="100" />
+        <el-table-column prop="costPrice" label="成本价" width="130" align="right" />
+        <el-table-column prop="salePrice" label="销售价" width="130" align="right" />
+        <el-table-column label="库存范围" width="160" align="center">
+          <template #default="{ row }">{{ row.stockLower }} ~ {{ row.stockUpper }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+              {{ row.status === 1 ? '启用' : '停用' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="180" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button v-perm="'base:goods:edit'" link type="primary" @click="openEdit(row)">
+              编辑
+            </el-button>
+            <el-button v-perm="'base:goods:delete'" link type="danger" @click="handleDelete(row)">
+              删除
+            </el-button>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="暂无商品数据" />
         </template>
-      </el-table-column>
-      <el-table-column label="操作" width="140" fixed="right" align="center">
-        <template #default="{ row }">
-          <el-button v-perm="'base:goods:edit'" link type="primary" @click="openEdit(row)">
-            编辑
-          </el-button>
-          <el-button v-perm="'base:goods:delete'" link type="danger" @click="handleDelete(row)">
-            删除
-          </el-button>
-        </template>
-      </el-table-column>
-      <template #empty>
-        <el-empty description="暂无商品数据" />
+      </el-table>
+
+      <template #footer>
+        <div class="card-footer">
+          <el-pagination
+            :current-page="query.page"
+            :page-size="query.pageSize"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="total"
+            layout="total, sizes, prev, pager, next, jumper"
+            @current-change="handlePageChange"
+            @size-change="handleSizeChange"
+          />
+        </div>
       </template>
-    </el-table>
-
-    <div class="pager">
-      <el-pagination
-        :current-page="query.page"
-        :page-size="query.pageSize"
-        :page-sizes="[10, 20, 50, 100]"
-        :total="total"
-        layout="total, sizes, prev, pager, next, jumper"
-        @current-change="handlePageChange"
-        @size-change="handleSizeChange"
-      />
-    </div>
+    </BaseCard>
 
     <el-dialog
       v-model="dialogVisible"
       :title="dialogMode === 'create' ? '新增商品' : '编辑商品'"
-      width="640px"
+      width="900px"
       destroy-on-close
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="90px">
-        <el-row :gutter="16">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="110px">
+        <el-row :gutter="20">
           <el-col :span="12">
             <el-form-item label="商品编码">
               <el-input v-model="form.code" :disabled="dialogMode === 'edit'" placeholder="留空自动生成" />
@@ -357,7 +393,7 @@ onMounted(() => {
           </el-col>
           <el-col :span="24">
             <el-form-item label="备注">
-              <el-input v-model="form.remark" type="textarea" :rows="2" maxlength="255" />
+              <el-input v-model="form.remark" type="textarea" :rows="3" maxlength="255" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -367,10 +403,44 @@ onMounted(() => {
         <el-button type="primary" :loading="submitting" @click="handleSubmit">保存</el-button>
       </template>
     </el-dialog>
+    <ImportDialog
+      v-model="importDialogVisible"
+      @success="fetchList"
+    />
   </div>
 </template>
 
 <style scoped>
+/* 卡片已自带内边距，去掉全局 .query-form 的底部外边距，避免卡片底部多出一段空白 */
+.query-form {
+  margin-bottom: 0;
+}
+
+/* 筛选项在列内撑满，避免固定像素宽度在窄屏断点下溢出 */
+.query-form :deep(.el-input),
+.query-form :deep(.el-select) {
+  width: 100%;
+}
+
+/* 查询、重置、新增、导出、导入统一排在查询卡片的最后一行 */
+.query-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+/* 两张卡片之间的统一间距 */
+.result-card {
+  margin-top: 16px;
+}
+
+/* footer 插槽内的分页靠右（el-card 已提供底部内边距，这里不再叠加 margin） */
+.card-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .full {
   width: 100%;
 }

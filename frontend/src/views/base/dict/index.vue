@@ -240,168 +240,177 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="dict-page">
-    <div class="page-card type-pane">
-      <div class="pane-header">
-        <span class="pane-title">字典类型</span>
-        <el-button v-perm="'base:dict:add'" type="primary" size="small" :icon="'Plus'" @click="openCreateType">
-          新增类型
-        </el-button>
+  <div class="page-container">
+    <div class="page-card">
+      <div class="page-header">
+        <h1 class="page-title">数据字典</h1>
+        <p class="page-subtitle">维护字典类型及其下属字典项，供全系统下拉与标签复用。</p>
       </div>
-      <el-table
-        v-loading="typesLoading"
-        :data="types"
-        border
-        stripe
-        highlight-current-row
-        height="100%"
-        @current-change="handleSelectType"
+
+      <div class="dict-page">
+        <div class="page-card type-pane">
+          <div class="pane-header">
+            <span class="pane-title">字典类型</span>
+            <el-button v-perm="'base:dict:add'" type="primary" size="small" :icon="'Plus'" @click="openCreateType">
+              新增类型
+            </el-button>
+          </div>
+          <el-table
+            v-loading="typesLoading"
+            :data="types"
+            border
+            stripe
+            highlight-current-row
+            height="100%"
+            @current-change="handleSelectType"
+          >
+            <el-table-column prop="name" label="名称" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="code" label="编码" min-width="160" show-overflow-tooltip />
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+                  {{ row.status === 1 ? '启用' : '停用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="160" align="center">
+              <template #default="{ row }">
+                <el-button v-perm="'base:dict:edit'" link type="primary" @click.stop="openEditType(row)">
+                  编辑
+                </el-button>
+                <el-button v-perm="'base:dict:delete'" link type="danger" @click.stop="handleDeleteType(row)">
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty description="暂无字典类型" />
+            </template>
+          </el-table>
+        </div>
+
+        <div class="page-card item-pane">
+          <div class="pane-header">
+            <span class="pane-title">字典项{{ typeName ? ` — ${typeName}` : '' }}</span>
+            <el-button
+              v-perm="'base:dict:add'"
+              type="primary"
+              size="small"
+              :icon="'Plus'"
+              :disabled="!selectedType"
+              @click="openCreateItem"
+            >
+              新增字典项
+            </el-button>
+          </div>
+          <el-table v-loading="itemsLoading" :data="items" border stripe height="100%">
+            <el-table-column prop="label" label="标签" min-width="160" />
+            <el-table-column prop="value" label="键值" min-width="140" />
+            <el-table-column prop="sort" label="排序" width="100" align="center" />
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+                  {{ row.status === 1 ? '启用' : '停用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip />
+            <el-table-column label="操作" width="160" fixed="right" align="center">
+              <template #default="{ row }">
+                <el-button v-perm="'base:dict:edit'" link type="primary" @click="openEditItem(row)">
+                  编辑
+                </el-button>
+                <el-button v-perm="'base:dict:delete'" link type="danger" @click="handleDeleteItem(row)">
+                  删除
+                </el-button>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty :description="selectedType ? '该类型暂无字典项' : '请先选择左侧字典类型'" />
+            </template>
+          </el-table>
+        </div>
+      </div>
+
+      <el-dialog
+        v-model="typeDialogVisible"
+        :title="typeDialogMode === 'create' ? '新增字典类型' : '编辑字典类型'"
+        width="600px"
+        destroy-on-close
       >
-        <el-table-column prop="name" label="名称" min-width="100" show-overflow-tooltip />
-        <el-table-column prop="code" label="编码" min-width="110" show-overflow-tooltip />
-        <el-table-column label="状态" width="70" align="center">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
-              {{ row.status === 1 ? '启用' : '停用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="110" align="center">
-          <template #default="{ row }">
-            <el-button v-perm="'base:dict:edit'" link type="primary" @click.stop="openEditType(row)">
-              编辑
-            </el-button>
-            <el-button v-perm="'base:dict:delete'" link type="danger" @click.stop="handleDeleteType(row)">
-              删除
-            </el-button>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty description="暂无字典类型" />
+        <el-form ref="typeFormRef" :model="typeForm" :rules="typeRules" label-width="120px">
+          <el-form-item label="类型编码" prop="code">
+            <el-input
+              v-model="typeForm.code"
+              :disabled="typeDialogMode === 'edit'"
+              placeholder="如 invoice_type"
+              maxlength="64"
+            />
+          </el-form-item>
+          <el-form-item label="类型名称" prop="name">
+            <el-input v-model="typeForm.name" placeholder="如 发票类型" maxlength="64" />
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-radio-group v-model="typeForm.status">
+              <el-radio :value="1">启用</el-radio>
+              <el-radio :value="0">停用</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="typeForm.remark" type="textarea" :rows="3" maxlength="255" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="typeDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="typeSubmitting" @click="handleTypeSubmit">保存</el-button>
         </template>
-      </el-table>
-    </div>
+      </el-dialog>
 
-    <div class="page-card item-pane">
-      <div class="pane-header">
-        <span class="pane-title">字典项{{ typeName ? ` — ${typeName}` : '' }}</span>
-        <el-button
-          v-perm="'base:dict:add'"
-          type="primary"
-          size="small"
-          :icon="'Plus'"
-          :disabled="!selectedType"
-          @click="openCreateItem"
-        >
-          新增字典项
-        </el-button>
-      </div>
-      <el-table v-loading="itemsLoading" :data="items" border stripe height="100%">
-        <el-table-column prop="label" label="标签" min-width="120" />
-        <el-table-column prop="value" label="键值" min-width="100" />
-        <el-table-column prop="sort" label="排序" width="70" align="center" />
-        <el-table-column label="状态" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
-              {{ row.status === 1 ? '启用' : '停用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="remark" label="备注" min-width="120" show-overflow-tooltip />
-        <el-table-column label="操作" width="110" fixed="right" align="center">
-          <template #default="{ row }">
-            <el-button v-perm="'base:dict:edit'" link type="primary" @click="openEditItem(row)">
-              编辑
-            </el-button>
-            <el-button v-perm="'base:dict:delete'" link type="danger" @click="handleDeleteItem(row)">
-              删除
-            </el-button>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty :description="selectedType ? '该类型暂无字典项' : '请先选择左侧字典类型'" />
+      <el-dialog
+        v-model="itemDialogVisible"
+        :title="itemDialogMode === 'create' ? '新增字典项' : '编辑字典项'"
+        width="600px"
+        destroy-on-close
+      >
+        <el-form ref="itemFormRef" :model="itemForm" :rules="itemRules" label-width="120px">
+          <el-form-item label="标签" prop="label">
+            <el-input v-model="itemForm.label" placeholder="显示名称" maxlength="64" />
+          </el-form-item>
+          <el-form-item label="键值" prop="value">
+            <el-input v-model="itemForm.value" placeholder="存储值" maxlength="64" />
+          </el-form-item>
+          <el-form-item label="排序">
+            <el-input-number v-model="itemForm.sort" :min="0" :precision="0" />
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-radio-group v-model="itemForm.status">
+              <el-radio :value="1">启用</el-radio>
+              <el-radio :value="0">停用</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="备注">
+            <el-input v-model="itemForm.remark" type="textarea" :rows="3" maxlength="255" />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="itemDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="itemSubmitting" @click="handleItemSubmit">保存</el-button>
         </template>
-      </el-table>
+      </el-dialog>
     </div>
-
-    <el-dialog
-      v-model="typeDialogVisible"
-      :title="typeDialogMode === 'create' ? '新增字典类型' : '编辑字典类型'"
-      width="480px"
-      destroy-on-close
-    >
-      <el-form ref="typeFormRef" :model="typeForm" :rules="typeRules" label-width="90px">
-        <el-form-item label="类型编码" prop="code">
-          <el-input
-            v-model="typeForm.code"
-            :disabled="typeDialogMode === 'edit'"
-            placeholder="如 invoice_type"
-            maxlength="64"
-          />
-        </el-form-item>
-        <el-form-item label="类型名称" prop="name">
-          <el-input v-model="typeForm.name" placeholder="如 发票类型" maxlength="64" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-radio-group v-model="typeForm.status">
-            <el-radio :value="1">启用</el-radio>
-            <el-radio :value="0">停用</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="typeForm.remark" type="textarea" :rows="2" maxlength="255" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="typeDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="typeSubmitting" @click="handleTypeSubmit">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="itemDialogVisible"
-      :title="itemDialogMode === 'create' ? '新增字典项' : '编辑字典项'"
-      width="480px"
-      destroy-on-close
-    >
-      <el-form ref="itemFormRef" :model="itemForm" :rules="itemRules" label-width="90px">
-        <el-form-item label="标签" prop="label">
-          <el-input v-model="itemForm.label" placeholder="显示名称" maxlength="64" />
-        </el-form-item>
-        <el-form-item label="键值" prop="value">
-          <el-input v-model="itemForm.value" placeholder="存储值" maxlength="64" />
-        </el-form-item>
-        <el-form-item label="排序">
-          <el-input-number v-model="itemForm.sort" :min="0" :precision="0" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-radio-group v-model="itemForm.status">
-            <el-radio :value="1">启用</el-radio>
-            <el-radio :value="0">停用</el-radio>
-          </el-radio-group>
-        </el-form-item>
-        <el-form-item label="备注">
-          <el-input v-model="itemForm.remark" type="textarea" :rows="2" maxlength="255" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="itemDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="itemSubmitting" @click="handleItemSubmit">保存</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <style scoped>
 .dict-page {
   display: flex;
-  gap: 12px;
+  gap: 20px;
   height: 100%;
   min-height: 0;
 }
 
 .type-pane {
-  width: 460px;
+  width: 560px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -418,11 +427,11 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .pane-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: #303133;
 }
