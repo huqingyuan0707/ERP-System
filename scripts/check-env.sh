@@ -65,9 +65,15 @@ read_value() {
       gsub(/[ \t]/, "", name)
       if (name != k) next
       val = substr(line, idx + 1)
-      # 行内注释仅对未加引号的值生效；含 # 的密钥请用引号包裹
+      sub(/^[ \t]+/, "", val)
+      # 引号值：取引号内的原文（含 # 的密码不会被误截断），引号后的内容视为注释
       q = substr(val, 1, 1)
-      if (q != "\042" && q != "\047") {
+      if (q == "\042" || q == "\047") {
+        rest = substr(val, 2)
+        end = index(rest, q)
+        val = (end > 0) ? substr(rest, 1, end - 1) : rest
+      } else {
+        # 未加引号：仅把「空白 + #」之后的部分视为行内注释
         sub(/[ \t]+#.*$/, "", val)
       }
       print val
