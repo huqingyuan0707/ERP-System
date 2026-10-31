@@ -57,3 +57,24 @@ class LoginLogRepository(BaseRepository[SysLoginLog]):
             .limit(limit)
         )
         return list((await self.db.execute(stmt)).scalars().all())
+
+    async def list_with_filter(
+        self,
+        username: str | None,
+        status: int | None,
+        start_date: datetime | None,
+        end_date: datetime | None,
+        page: int,
+        page_size: int,
+    ) -> tuple[list[SysLoginLog], int]:
+        """按条件筛选并分页查询登录日志。"""
+        stmt = select(SysLoginLog).order_by(SysLoginLog.created_at.desc(), SysLoginLog.id.desc())
+        if username:
+            stmt = stmt.where(SysLoginLog.username.ilike(f"%{username}%"))
+        if status is not None:
+            stmt = stmt.where(SysLoginLog.status == status)
+        if start_date is not None:
+            stmt = stmt.where(SysLoginLog.created_at >= start_date)
+        if end_date is not None:
+            stmt = stmt.where(SysLoginLog.created_at <= end_date)
+        return await self.paginate(stmt, page, page_size)

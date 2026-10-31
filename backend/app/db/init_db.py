@@ -134,6 +134,8 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("导入商品", "base:goods:import", goods_menu.id, 5),
         _button("商品分类管理", "base:category:list", goods_menu.id, 6),
         _button("计量单位管理", "base:unit:list", goods_menu.id, 7),
+        _button("查看操作日志", "sys:log:view", user_menu.id, 6),
+        _button("查看异步任务", "sys:task:view", user_menu.id, 7),
         _button("超级权限", "*", dir_sys.id, 99),
     ]
     session.add_all(buttons)

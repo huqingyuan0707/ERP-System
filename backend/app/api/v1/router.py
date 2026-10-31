@@ -4,7 +4,7 @@ import logging
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, configs, dicts, goods, system
+from app.api.v1.endpoints import auth, configs, dicts, goods, log, system, task, export
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import ApiResponse, success_response
@@ -68,3 +68,6 @@ api_router.include_router(system.router)
 api_router.include_router(dicts.router)
 api_router.include_router(configs.router)
 api_router.include_router(goods.router)
+api_router.include_router(log.router)
+api_router.include_router(task.router)
+api_router.include_router(export.router)
