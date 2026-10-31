@@ -25,9 +25,18 @@ export const deleteWarehouse = (id: number): Promise<null> =>
 
 /** 获取全部未删除用户，作为仓库负责人下拉框选项。 */
 export const fetchManagerOptions = async (): Promise<ManagerOption[]> => {
-  const result = await getUserList({ page: 1, pageSize: 1000, status: 1 })
-  return result.items.map((user) => ({
-    value: user.id,
-    label: user.realName ?? user.username,
-  }))
+  // 后端约定 pageSize<=100，这里按 100 一页循环拉取全部启用用户
+  const pageSize = 100
+  const items: ManagerOption[] = []
+  for (let page = 1; ; page += 1) {
+    const result = await getUserList({ page, pageSize, status: 1 })
+    items.push(
+      ...result.items.map((user) => ({
+        value: user.id,
+        label: user.realName ?? user.username,
+      })),
+    )
+    if (items.length >= result.total || result.items.length === 0) break
+  }
+  return items
 }

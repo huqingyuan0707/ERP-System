@@ -73,18 +73,19 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/error/ForbiddenPage.vue'),
     meta: { public: true, title: '无权限' },
   },
+  {
+    // 兜底路由：动态菜单路由注册前先命中此处，避免 matcher 报 No match 警告；
+    // 守卫注册路由后会按原路径重新解析，最终仍未匹配则跳转 /403。
+    path: '/:pathMatch(.*)*',
+    name: 'NotFound',
+    component: () => import('@/views/error/ForbiddenPage.vue'),
+    meta: { title: '无权限' },
+  },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes,
-})
-
-/** 捕获并忽略 Vue Router 路由未匹配警告，避免控制台噪音。 */
-router.onError((error) => {
-  if (error.message?.includes('No match found')) {
-    return
-  }
 })
 
 /** 动态路由是否已按当前用户菜单注册（登出后重置）。 */
@@ -138,8 +139,8 @@ router.beforeEach(async (to) => {
     return { path: to.path, query: to.query, hash: to.hash, replace: true }
   }
 
-  // 合法路由均来自用户菜单：已登录却无匹配路由视为越权
-  if (to.matched.length === 0) {
+  // 合法路由均来自用户菜单：已登录仍落在兜底路由，视为越权
+  if (to.name === 'NotFound') {
     return { path: '/403' }
   }
 

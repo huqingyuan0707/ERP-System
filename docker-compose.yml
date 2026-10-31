@@ -44,24 +44,6 @@ services:
     command: gunicorn app.main:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 -w 4
     restart: unless-stopped
 
-  celery-worker:
-    build: ./backend
-    env_file: .env
-    command: celery -A app.tasks worker -l info
-    depends_on:
-      - redis
-      - postgres
-    restart: unless-stopped
-
-  celery-beat:
-    build: ./backend
-    env_file: .env
-    command: celery -A app.tasks beat -l info
-    depends_on:
-      - redis
-      - postgres
-    restart: unless-stopped
-
   frontend:
     build: ./frontend
     restart: unless-stopped

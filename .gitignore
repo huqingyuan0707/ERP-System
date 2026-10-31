@@ -22,3 +22,9 @@ dist/
 .idea/
 .vscode/
 .DS_Store
+
+# 运行日志 / 临时产物
+*.log
+*.err
+.backend.*
+.frontend.*
