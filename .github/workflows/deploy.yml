@@ -279,11 +279,15 @@ jobs:
       # 先校验 SSH 相关 Secret：缺失或粘贴成公钥时直接给出明确指引，
       # 避免 ssh-action 只报 "ssh: no key found" 这类难以定位的错误
       - name: 校验部署密钥
+        id: deploykey
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
           DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_REPO_TOKEN: ${{ secrets.DEPLOY_REPO_TOKEN }}
+          DEPLOY_REPO: ${{ secrets.DEPLOY_REPO }}
         run: |
           set -uo pipefail
           fail() { echo "::error::$1"; exit 1; }
@@ -291,11 +295,32 @@ jobs:
           [ -n "${DEPLOY_HOST:-}" ] || fail "缺少 Secret DEPLOY_HOST（服务器 IP 或域名）"
           [ -n "${DEPLOY_USER:-}" ] || fail "缺少 Secret DEPLOY_USER（SSH 登录用户，如 root）"
 
+          # SSH 端口：未配置默认 22；配置了必须是纯数字，避免把非法值传给 ssh-action
+          port="$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')"
+          if ! printf '%s' "$port" | grep -Eq '^[0-9]{1,5}$'; then
+            fail "Secret DEPLOY_PORT 必须是纯数字（1-65535）"
+          fi
+          echo "port=${port}" >> "$GITHUB_OUTPUT"
+
+          # 仓库地址：可用 Secret 覆盖，便于 fork / 迁移而无需改工作流
+          repo="$(printf '%s' "${DEPLOY_REPO:-}" | tr -d '[:space:]')"
+          [ -n "$repo" ] || repo="huqingyuan0707/ERP-System"
+          echo "repo=${repo}" >> "$GITHUB_OUTPUT"
+
+          # DEPLOY_REPO_TOKEN 可选；配置了就提示格式，降低填错概率
+          if [ -n "${DEPLOY_REPO_TOKEN:-}" ]; then
+            case "$DEPLOY_REPO_TOKEN" in
+              ghp_*|github_pat_*) : ;;
+              *) echo "::warning::Secret DEPLOY_REPO_TOKEN 格式可疑（应以 ghp_ 或 github_pat_ 开头）" ;;
+            esac
+          fi
+
           # 密码登录作为兜底：配置了 DEPLOY_PASSWORD 就不再要求私钥
           use_password=0
           if [ -n "${DEPLOY_PASSWORD:-}" ]; then
             use_password=1
             echo "检测到 Secret DEPLOY_PASSWORD，改用密码方式登录（跳过私钥校验）"
+            echo "key_path=" >> "$GITHUB_OUTPUT"
           else
             [ -n "${DEPLOY_SSH_KEY:-}" ] || fail "缺少 Secret DEPLOY_SSH_KEY（填 SSH 私钥全文）或 DEPLOY_PASSWORD（服务器登录密码）"
 
@@ -317,37 +342,57 @@ jobs:
               echo "替代方案：配置 Secret DEPLOY_PASSWORD 改用密码登录"
               exit 1
             fi
-            # 去掉首行空行：多行私钥若以空行开头同样会导致解析失败
-            key="$(printf '%s\n' "$key" | sed '/./,$!d')"
-
-            # 规范化后的私钥写回环境变量供 SSH 步骤使用（不打印内容，避免泄露）
-          {
-            echo 'DEPLOY_SSH_KEY_CLEAN<<SSH_KEY_EOF'
-            printf '%s\n' "$key"
-            echo 'SSH_KEY_EOF'
-          } >> "$GITHUB_ENV"
-
-          {
-            echo "### 部署密钥校验"
-            echo "- DEPLOY_HOST : 已配置"
-            echo "- DEPLOY_USER : 已配置"
-            if [ "$use_password" = "1" ]; then
-              echo "- 认证方式   : 密码（DEPLOY_PASSWORD）"
-            else
-              echo "- 认证方式   : 私钥（长度 ${#key}）"
+            # 私钥必须完整：同时校验结尾标记，避免只粘贴首行导致解析失败
+            if ! printf '%s' "$key" | grep -q 'END .*PRIVATE KEY'; then
+              echo "::error::DEPLOY_SSH_KEY 内容不完整：未找到 END ... PRIVATE KEY 结尾标记"
+              echo "请确认粘贴的是完整私钥（需同时包含 BEGIN 与 END 两行及中间内容）"
+              exit 1
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+            # 去掉开头所有空行（多行私钥以空行开头同样会导致解析失败）
+            key="$(printf '%s\n' "$key" | awk 'NF{p=1} p')"
+
+            # 逐行标记为敏感，确保后续任何日志输出都不会泄露私钥内容
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::add-mask::$line"
+            done <<< "$key"
+
+            # 私钥写入运行器临时文件（600）并通过 key_path 传给 SSH 步骤；
+            # 不写入 $GITHUB_ENV，避免私钥进入后续所有步骤的全局环境变量
+            key_file="${RUNNER_TEMP}/deploy_ssh_key"
+            printf '%s\n' "$key" > "$key_file"
+            chmod 600 "$key_file"
+            echo "key_path=${key_file}" >> "$GITHUB_OUTPUT"
+
+            {
+              echo "### 部署密钥校验"
+              echo "- DEPLOY_HOST : 已配置"
+              echo "- DEPLOY_USER : 已配置"
+              echo "- SSH 端口   : ${port}"
+              echo "- 认证方式   : 私钥（长度 ${#key}）"
+              echo "- 目标仓库   : ${repo}"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # 凭证先在 CI 侧做 base64，避免密码里的特殊字符破坏远端 shell 脚本
+      # 凭证先在 CI 侧做 base64（base64 只含安全字符），避免密码里的特殊字符破坏远端 shell 脚本；
+      # 结果写入 step output 而非 $GITHUB_ENV，避免敏感值进入后续所有步骤的全局环境变量
       - name: 编码服务器端所需配置
+        id: enc
         run: |
+          set -uo pipefail
+          b64_registry="$(printf '%s' "$ACR_REGISTRY" | base64 -w0)"
+          b64_user="$(printf '%s' "$ACR_USERNAME" | base64 -w0)"
+          b64_pass="$(printf '%s' "$ACR_PASSWORD" | base64 -w0)"
+          b64_token="$(printf '%s' "$DEPLOY_REPO_TOKEN" | base64 -w0)"
+          # 掩码：即使意外被打印也不会泄露真实值
+          for v in "$b64_user" "$b64_pass" "$b64_token"; do
+            [ -n "$v" ] && echo "::add-mask::$v"
+          done
           {
-            echo "acr_registry_b64=$(printf '%s' "$ACR_REGISTRY" | base64 -w0)"
-            echo "acr_user_b64=$(printf '%s' "$ACR_USERNAME" | base64 -w0)"
-            echo "acr_pass_b64=$(printf '%s' "$ACR_PASSWORD" | base64 -w0)"
-            echo "deploy_repo_token_b64=$(printf '%s' "$DEPLOY_REPO_TOKEN" | base64 -w0)"
-          } >> "$GITHUB_ENV"
+            echo "acr_registry_b64=${b64_registry}"
+            echo "acr_user_b64=${b64_user}"
+            echo "acr_pass_b64=${b64_pass}"
+            echo "deploy_repo_token_b64=${b64_token}"
+          } >> "$GITHUB_OUTPUT"
         env:
           ACR_REGISTRY: ${{ needs.build-and-push.outputs.host }}/${{ needs.build-and-push.outputs.namespace }}
           ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
@@ -359,26 +404,34 @@ jobs:
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ env.DEPLOY_SSH_KEY_CLEAN }}
+          # 私钥通过文件路径传递（校验步骤写入的临时文件），不进入环境变量
+          key_path: ${{ steps.deploykey.outputs.key_path }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
-          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          port: ${{ steps.deploykey.outputs.port }}
           script: |
             set -euo pipefail
             # 首次部署可能还没有代码目录：配置了 DEPLOY_REPO_TOKEN 时自动克隆，否则给出明确指引
-            repo_token="$(printf '%s' '${{ env.deploy_repo_token_b64 }}' | base64 -d 2>/dev/null | tr -d '\r\n' || true)"
+            repo_token="$(printf '%s' '${{ steps.enc.outputs.deploy_repo_token_b64 }}' | base64 -d 2>/dev/null | tr -d '\r\n' || true)"
+            repo_slug='${{ steps.deploykey.outputs.repo }}'
             if [ ! -d /root/erp ]; then
               if [ -n "$repo_token" ]; then
-                echo "服务器上不存在 /root/erp，正在用 DEPLOY_REPO_TOKEN 克隆仓库 ..."
-                git clone --depth 1 "https://x-access-token:${repo_token}@github.com/huqingyuan0707/ERP-System.git" /root/erp
+                echo "服务器上不存在 /root/erp，正在用 DEPLOY_REPO_TOKEN 克隆仓库 ${repo_slug} ..."
+                # token 不写进 URL 与命令行参数：写入 600 权限的临时凭据文件，克隆后立即删除
+                umask 077
+                cred_file="$(mktemp)"
+                printf 'https://x-access-token:%s@github.com\n' "$repo_token" > "$cred_file"
+                # 不使用 --depth 浅克隆：update.sh 需要 fetch + reset --hard 拉取远端最新提交
+                git -c "credential.helper=store --file=${cred_file}" clone "https://github.com/${repo_slug}.git" /root/erp
+                rm -f "$cred_file"
               else
                 echo "错误：服务器上不存在 /root/erp 目录。请先在服务器上把仓库克隆到该目录，或配置 Secret DEPLOY_REPO_TOKEN 让流水线自动克隆"
                 exit 1
               fi
             fi
             cd /root/erp
-            registry="$(printf '%s' '${{ env.acr_registry_b64 }}' | base64 -d | tr -d '[:space:]')"
-            username="$(printf '%s' '${{ env.acr_user_b64 }}' | base64 -d | tr -d '[:space:]')"
-            password="$(printf '%s' '${{ env.acr_pass_b64 }}' | base64 -d | tr -d '\r\n')"
+            registry="$(printf '%s' '${{ steps.enc.outputs.acr_registry_b64 }}' | base64 -d | tr -d '[:space:]')"
+            username="$(printf '%s' '${{ steps.enc.outputs.acr_user_b64 }}' | base64 -d | tr -d '[:space:]')"
+            password="$(printf '%s' '${{ steps.enc.outputs.acr_pass_b64 }}' | base64 -d | tr -d '\r\n')"
             echo "服务器端 ACR 配置：registry=${registry}, 用户名长度=${#username}, 密码长度=${#password}"
 
             # ACR_REGISTRY 非敏感：写进 .env，供 docker-compose 拼出镜像名
@@ -387,6 +440,17 @@ jobs:
             else
               echo "ACR_REGISTRY=${registry}" >> .env
             fi
+
+            # 镜像 tag 也要写进 .env：compose 用它决定拉哪个 tag，
+            # 不写就会用默认 latest，与本次流水线推送的 tag 不一致导致拉不到镜像
+            for kv in "BACKEND_IMAGE_TAG=${{ env.ACR_TAG }}" "FRONTEND_IMAGE_TAG=${{ env.ACR_TAG }}"; do
+              k="${kv%%=*}"; v="${kv#*=}"
+              if grep -q "^${k}=" .env; then
+                sed -i "s|^${k}=.*|${k}=${v}|" .env
+              else
+                echo "${k}=${v}" >> .env
+              fi
+            done
 
             # 凭证单独放 .acr.env（600 权限），不进入 .env，避免被 compose 注入到容器
             umask 077

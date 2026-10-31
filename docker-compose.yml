@@ -37,7 +37,7 @@ services:
 
   backend:
     # 镜像由 CI 构建并推送到阿里云 ACR；ACR_REGISTRY 在 .env 中配置（含命名空间）
-    image: ${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com/your-namespace}/erpa-backend:latest
+    image: ${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com/your-namespace}/erpa-backend:${BACKEND_IMAGE_TAG:-latest}
     env_file: .env
     depends_on:
       postgres:
@@ -48,7 +48,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    image: ${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com/your-namespace}/erpa-frontend:latest
+    image: ${ACR_REGISTRY:-registry.cn-hangzhou.aliyuncs.com/your-namespace}/erpa-frontend:${FRONTEND_IMAGE_TAG:-latest}
     restart: unless-stopped
 
   nginx:
