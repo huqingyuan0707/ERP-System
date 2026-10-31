@@ -36,9 +36,9 @@ jobs:
         id: acr
         run: |
           set -uo pipefail
-          # 清洗复制粘贴可能带入的空白、引号、反引号、回车换行
+          # 清洗复制粘贴可能带入的空白与回车换行（其余非法字符由下方正则校验拦截）
           clean() {
-            printf '%s' "$1" | tr -d '\r\n\t ' | tr -d "\"'`"
+            printf '%s' "$1" | tr -d '[:space:]'
           }
           registry="$(clean "$ACR_REGISTRY")"
           host_raw="$(clean "$ACR_HOST")"
