@@ -255,6 +255,8 @@ jobs:
           DEPLOY_REPO_TOKEN: ${{ secrets.DEPLOY_REPO_TOKEN }}
           DEPLOY_REPO: ${{ secrets.DEPLOY_REPO }}
         run: |
+          # 刻意不加 -e：统一由 fail() 打印 ::error:: 后 exit 1，
+          # 保证错误信息完整、退出码可控（加 -e 会在中途某条命令失败时直接中断）
           set -uo pipefail
           fail() { echo "::error::$1"; exit 1; }
 
@@ -287,7 +289,9 @@ jobs:
             use_password=1
             echo "检测到 Secret DEPLOY_PASSWORD，改用密码方式登录（跳过私钥校验）"
             echo "key_path=" >> "$GITHUB_OUTPUT"
+            echo "use_password=1" >> "$GITHUB_OUTPUT"
           else
+            echo "use_password=0" >> "$GITHUB_OUTPUT"
             [ -n "${DEPLOY_SSH_KEY:-}" ] || fail "缺少 Secret DEPLOY_SSH_KEY（填 SSH 私钥全文）或 DEPLOY_PASSWORD（服务器登录密码）"
 
             # 去掉复制粘贴可能带入的 CR 字符：CRLF 会让 Go 版 ssh 解析私钥失败（no key found）
@@ -295,14 +299,16 @@ jobs:
             # 兼容 base64 编码的私钥：Secret 中常这样保存多行私钥
             if ! printf '%s' "$key" | grep -q 'BEGIN .*PRIVATE KEY'; then
               decoded="$(printf '%s' "$key" | base64 -d 2>/dev/null | tr -d '\r' || true)"
-              if printf '%s' "$decoded" | grep -q 'BEGIN .*PRIVATE KEY'; then
+              # 严格判定：首行必须是标准 PEM 私钥头，避免任意文本解码后被误认为私钥
+              if printf '%s' "$decoded" | grep -qE '^-----BEGIN (OPENSSH|RSA|EC|DSA|ENCRYPTED)? ?PRIVATE KEY-----$'; then
                 key="$decoded"
                 echo "检测到 base64 编码的私钥，已自动解码"
               fi
             fi
-            if ! printf '%s' "$key" | grep -q 'BEGIN .*PRIVATE KEY'; then
+            if ! printf '%s' "$key" | grep -qE '^-----BEGIN (OPENSSH|RSA|EC|DSA|ENCRYPTED)? ?PRIVATE KEY-----$'; then
               echo "::error::DEPLOY_SSH_KEY 不是可识别的 SSH 私钥"
-              echo "检测到的内容开头：$(printf '%s' "$key" | head -c 32 | tr -d '\r\n')"
+              # 只输出布尔结论，绝不打印私钥片段（避免日志泄露）
+              echo "检测结论：以 -----BEGIN 开头=$(printf '%s' "$key" | grep -c '^-----BEGIN' || true)；像公钥(ssh-开头)=$(printf '%s' "$key" | grep -c '^ssh-' || true)；内容长度=${#key}"
               echo "支持的格式：OpenSSH（-----BEGIN OPENSSH PRIVATE KEY-----）、PKCS#8（-----BEGIN PRIVATE KEY-----）、RSA（-----BEGIN RSA PRIVATE KEY-----）"
               echo "常见原因：1) 误填 .pub 公钥（内容形如 ssh-ed25519 AAAA...）；2) 填了 PuTTY 格式（PuTTY-User-Key-File-2:），需换 OpenSSH 格式；3) 只复制了公钥或私钥被截断"
               echo "替代方案：配置 Secret DEPLOY_PASSWORD 改用密码登录"
@@ -357,7 +363,8 @@ jobs:
             echo "acr_registry_b64=${b64_registry}"
             echo "acr_user_b64=${b64_user}"
             echo "acr_pass_b64=${b64_pass}"
-            echo "deploy_repo_token_b64=${b64_token}"
+            # 未配置 token 时不写该输出，远端按“未配置”分支处理
+            [ -n "$b64_token" ] && echo "deploy_repo_token_b64=${b64_token}"
           } >> "$GITHUB_OUTPUT"
         env:
           ACR_REGISTRY: ${{ needs.build-and-push.outputs.host }}/${{ needs.build-and-push.outputs.namespace }}
@@ -370,12 +377,15 @@ jobs:
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
-          # 私钥通过文件路径传递（校验步骤写入的临时文件），不进入环境变量
+          # 私钥通过文件路径传递（校验步骤写入的 600 临时文件），不进入环境变量；
+          # 认证方式二选一：配置了密码就不传私钥，避免 action 同时拿到两套凭据
           key_path: ${{ steps.deploykey.outputs.key_path }}
-          password: ${{ secrets.DEPLOY_PASSWORD }}
+          password: ${{ steps.deploykey.outputs.use_password == '1' && secrets.DEPLOY_PASSWORD || '' }}
           port: ${{ steps.deploykey.outputs.port }}
           script: |
             set -euo pipefail
+            # 明确关闭调试回显，避免 set -x 把 token/密码打进日志
+            set +x
             # 首次部署可能还没有代码目录：配置了 DEPLOY_REPO_TOKEN 时自动克隆，否则给出明确指引
             repo_token="$(printf '%s' '${{ steps.enc.outputs.deploy_repo_token_b64 }}' | base64 -d 2>/dev/null | tr -d '\r\n' || true)"
             repo_slug='${{ steps.deploykey.outputs.repo }}'
@@ -385,10 +395,14 @@ jobs:
                 # token 不写进 URL 与命令行参数：写入 600 权限的临时凭据文件，克隆后立即删除
                 umask 077
                 cred_file="$(mktemp)"
+                trap 'rm -f "$cred_file"' EXIT
                 printf 'https://x-access-token:%s@github.com\n' "$repo_token" > "$cred_file"
                 # 不使用 --depth 浅克隆：update.sh 需要 fetch + reset --hard 拉取远端最新提交
                 git -c "credential.helper=store --file=${cred_file}" clone "https://github.com/${repo_slug}.git" /root/erp
+                # 远程 URL 不含 token：token 只存在于临时凭据文件（退出时删除）
+                git -C /root/erp remote set-url origin "https://github.com/${repo_slug}.git"
                 rm -f "$cred_file"
+                trap - EXIT
               else
                 echo "错误：服务器上不存在 /root/erp 目录。请先在服务器上把仓库克隆到该目录，或配置 Secret DEPLOY_REPO_TOKEN 让流水线自动克隆"
                 exit 1

@@ -67,7 +67,7 @@ read_value() {
       val = substr(line, idx + 1)
       # 行内注释仅对未加引号的值生效；含 # 的密钥请用引号包裹
       q = substr(val, 1, 1)
-      if (q != "\"" && q != "\'") {
+      if (q != "\042" && q != "\047") {
         sub(/[ \t]+#.*$/, "", val)
       }
       print val
@@ -112,11 +112,19 @@ not_placeholder() {
 
 # 检查配置项：file key [validator]
 check_file() {
-  local file="$1" key="$2" validator="${3:-}" value="" rc=0
+  # 用法: check_file <文件> <键名> [校验器] [optional]
+  # 第四个参数为 optional 时，文件缺失只提示、不计入失败（.acr.env 属可选文件）
+  local file="$1" key="$2" validator="${3:-}" mode="${4:-required}" value="" rc=0
   # 注意：read_value 用返回码区分「文件不存在/不可读/解析失败」，必须保留原始退出码
   value="$(read_value "$file" "$key")" && rc=0 || rc=$?
   case "$rc" in
-    2) fail "[缺失] $file 不存在（缺少 $key）" ; return 0 ;;
+    2)
+      if [ "$mode" = "optional" ]; then
+        warn "[提示] $file 不存在，跳过 $key 检查（可选文件）"
+      else
+        fail "[缺失] $file 不存在（缺少 $key）"
+      fi
+      return 0 ;;
     3) fail "[不可读] $file 读取失败，请检查权限：$key" ; return 0 ;;
     4) fail "[解析失败] $file 解析异常，请检查文件格式：$key" ; return 0 ;;
   esac
@@ -156,8 +164,8 @@ else
 fi
 check_file .env DB_PASSWORD valid_password
 check_file .env SECRET_KEY valid_secret_key
-check_file .acr.env ACR_USERNAME
-check_file .acr.env ACR_PASSWORD
+check_file .acr.env ACR_USERNAME "" optional
+check_file .acr.env ACR_PASSWORD "" optional
 
 echo "==> 检查 Docker 镜像仓库连通性 ..."
 # registry 复用上面已取到的 ACR_REGISTRY（.env 优先、.acr.env 回退），避免两处取值逻辑不一致
