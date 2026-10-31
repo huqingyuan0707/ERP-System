@@ -215,7 +215,8 @@ bash scripts/setup-https.sh your.domain.com
 | `DEPLOY_SSH_KEY` | `-----BEGIN OPENSSH PRIVATE KEY----- …` | **SSH 私钥全文**（不是 `.pub` 公钥），以「粘贴为纯文本」方式填入；流水线会自动清理 CRLF 换行，并兼容 base64 编码的私钥 |
 | `DEPLOY_PASSWORD` | — | 可选，服务器登录密码；配置后改用密码登录，不再需要 `DEPLOY_SSH_KEY` |
 | `DEPLOY_PORT` | `22` | 可选，SSH 端口，默认 22 |
-| `DEPLOY_REPO_TOKEN` | `ghp_xxx` | 可选，仓库访问令牌；仅当服务器上还没有代码目录时，用于自动 clone 到 `/root/erp` |
+| `DEPLOY_REPO_TOKEN` | `github_pat_xxx` | 可选，仓库访问令牌；**仅当服务器上还没有代码目录时**，用于自动 clone 到 `/root/erp`。推荐使用 **fine-grained token**（权限只需 `Contents: Read`），而非 classic `ghp_` 全权限令牌，降低泄露影响面；流水线不会把该 token 写进 clone 的 URL 或命令行参数（改用临时凭据文件，克隆后立即删除） |
+| `DEPLOY_REPO` | `huqingyuan0707/ERP-System` | 可选，目标仓库 `owner/repo`；fork 或迁移仓库时改这里，无需改工作流 |
 
 私钥的正确获取方式（在能登录服务器的机器上执行）：
 
