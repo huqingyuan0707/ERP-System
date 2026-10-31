@@ -6,7 +6,6 @@ from sqlalchemy import (  # 查询类型、绑定参数与读写语句。
     Select,
     bindparam,
     func,
-    inspect,
     or_,
     select,
     text,
@@ -117,14 +116,23 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
         return list((await self.db.execute(stmt)).scalars().all())  # 返回全部可选供应商。
 
     async def existing_tables(self) -> set[str]:  # 判断外部单据表是否已经建好。
-        """反射当前数据库实际存在的表名集合。
+        """返回当前数据库实际存在的表名集合。
 
         采购、财务模块尚未落地时相关表不存在，引用检查需要跳过这些表，
         对应模块上线后同一段检查逻辑即可自动生效，无需改写业务代码。
         """
-        return await self.db.run_sync(  # run_sync 在同步连接上执行反射，再返回结果。
-            lambda conn: set(inspect(conn).get_table_names())  # 同步连接上直接读取表名。
-        )  # 只读元数据，不修改任何表结构。
+        dialect = self.db.get_bind().dialect.name  # 识别数据库方言以选择系统目录查询。
+        if dialect == "postgresql":  # PostgreSQL 从 information_schema 读取表名。
+            sql = (
+                "SELECT table_name FROM information_schema.tables "
+                "WHERE table_schema = current_schema()"
+            )
+        elif dialect == "sqlite":  # SQLite 从 sqlite_master 读取表名。
+            sql = "SELECT name FROM sqlite_master WHERE type = 'table'"
+        else:  # 其它方言没有统一的目录查询方式，跳过外部单据检查。
+            return set()  # 返回空集合，表示没有可检查的外部表。
+        rows = (await self.db.execute(text(sql))).scalars().all()  # 读取全部表名。
+        return {str(name) for name in rows}  # 统一转成字符串集合便于比较。
 
     async def has_open_purchase_order(self, supplier_id: int) -> bool:  # 判断是否存在未结采购订单。
         """返回该供应商是否存在未结清的采购订单；采购订单表未创建时返回 False。
