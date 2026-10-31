@@ -283,23 +283,44 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PASSWORD: ${{ secrets.DEPLOY_PASSWORD }}
         run: |
           set -uo pipefail
           fail() { echo "::error::$1"; exit 1; }
 
           [ -n "${DEPLOY_HOST:-}" ] || fail "缺少 Secret DEPLOY_HOST（服务器 IP 或域名）"
           [ -n "${DEPLOY_USER:-}" ] || fail "缺少 Secret DEPLOY_USER（SSH 登录用户，如 root）"
-          [ -n "${DEPLOY_SSH_KEY:-}" ] || fail "缺少 Secret DEPLOY_SSH_KEY（SSH 私钥内容，不能填 .pub 公钥）"
 
-          # 去掉复制粘贴可能带入的 CR 字符：CRLF 会让 Go 版 ssh 解析私钥失败（no key found）
-          key="$(printf '%s' "$DEPLOY_SSH_KEY" | tr -d '\r')"
-          if ! printf '%s' "$key" | grep -q 'BEGIN .*PRIVATE KEY'; then
-            fail "DEPLOY_SSH_KEY 不是可识别的私钥（应包含 -----BEGIN ... PRIVATE KEY-----）；请勿填写 .pub 公钥"
-          fi
-          # 去掉首行空行：多行私钥若以空行开头同样会导致解析失败
-          key="$(printf '%s\n' "$key" | sed '/./,$!d')"
+          # 密码登录作为兜底：配置了 DEPLOY_PASSWORD 就不再要求私钥
+          use_password=0
+          if [ -n "${DEPLOY_PASSWORD:-}" ]; then
+            use_password=1
+            echo "检测到 Secret DEPLOY_PASSWORD，改用密码方式登录（跳过私钥校验）"
+          else
+            [ -n "${DEPLOY_SSH_KEY:-}" ] || fail "缺少 Secret DEPLOY_SSH_KEY（填 SSH 私钥全文）或 DEPLOY_PASSWORD（服务器登录密码）"
 
-          # 规范化后的私钥写回环境变量供 SSH 步骤使用（不打印内容，避免泄露）
+            # 去掉复制粘贴可能带入的 CR 字符：CRLF 会让 Go 版 ssh 解析私钥失败（no key found）
+            key="$(printf '%s' "$DEPLOY_SSH_KEY" | tr -d '\r')"
+            # 兼容 base64 编码的私钥：Secret 中常这样保存多行私钥
+            if ! printf '%s' "$key" | grep -q 'BEGIN .*PRIVATE KEY'; then
+              decoded="$(printf '%s' "$key" | base64 -d 2>/dev/null | tr -d '\r' || true)"
+              if printf '%s' "$decoded" | grep -q 'BEGIN .*PRIVATE KEY'; then
+                key="$decoded"
+                echo "检测到 base64 编码的私钥，已自动解码"
+              fi
+            fi
+            if ! printf '%s' "$key" | grep -q 'BEGIN .*PRIVATE KEY'; then
+              echo "::error::DEPLOY_SSH_KEY 不是可识别的 SSH 私钥"
+              echo "检测到的内容开头：$(printf '%s' "$key" | head -c 32 | tr -d '\r\n')"
+              echo "支持的格式：OpenSSH（-----BEGIN OPENSSH PRIVATE KEY-----）、PKCS#8（-----BEGIN PRIVATE KEY-----）、RSA（-----BEGIN RSA PRIVATE KEY-----）"
+              echo "常见原因：1) 误填 .pub 公钥（内容形如 ssh-ed25519 AAAA...）；2) 填了 PuTTY 格式（PuTTY-User-Key-File-2:），需换 OpenSSH 格式；3) 只复制了公钥或私钥被截断"
+              echo "替代方案：配置 Secret DEPLOY_PASSWORD 改用密码登录"
+              exit 1
+            fi
+            # 去掉首行空行：多行私钥若以空行开头同样会导致解析失败
+            key="$(printf '%s\n' "$key" | sed '/./,$!d')"
+
+            # 规范化后的私钥写回环境变量供 SSH 步骤使用（不打印内容，避免泄露）
           {
             echo 'DEPLOY_SSH_KEY_CLEAN<<SSH_KEY_EOF'
             printf '%s\n' "$key"
@@ -310,8 +331,13 @@ jobs:
             echo "### 部署密钥校验"
             echo "- DEPLOY_HOST : 已配置"
             echo "- DEPLOY_USER : 已配置"
-            echo "- 私钥格式    : 合法（长度 ${#key}）"
+            if [ "$use_password" = "1" ]; then
+              echo "- 认证方式   : 密码（DEPLOY_PASSWORD）"
+            else
+              echo "- 认证方式   : 私钥（长度 ${#key}）"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       # 凭证先在 CI 侧做 base64，避免密码里的特殊字符破坏远端 shell 脚本
       - name: 编码服务器端所需配置
@@ -334,6 +360,7 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ env.DEPLOY_SSH_KEY_CLEAN }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
           port: ${{ secrets.DEPLOY_PORT || 22 }}
           script: |
             set -euo pipefail
