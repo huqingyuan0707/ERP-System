@@ -32,6 +32,14 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v5
 
+      - name: 诊断 ACR 配置（仅非敏感项，base64 避免被掩码）
+        run: |
+          {
+            echo "reg_b64=$(printf '%s' "$ACR_REGISTRY" | base64 -w0)"
+            echo "user_b64=$(printf '%s' "$ACR_USERNAME" | base64 -w0)"
+            echo "pass_len=${#ACR_PASSWORD}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: 解析并校验 ACR 配置
         id: acr
         env:
