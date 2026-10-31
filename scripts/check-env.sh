@@ -86,13 +86,6 @@ read_value() {
   value="${value%$'\r'}"
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
-  # 仅在首尾成对引号时剥离，避免误伤本身以引号结尾的合法值
-  if [ "${#value}" -ge 2 ]; then
-    case "$value" in
-      \"*\") value="${value:1:${#value}-2}" ;;
-      \'*\') value="${value:1:${#value}-2}" ;;
-    esac
-  fi
   printf '%s' "$value"
 }
 
@@ -173,6 +166,22 @@ check_file .env SECRET_KEY valid_secret_key
 check_file .acr.env ACR_USERNAME "" optional
 check_file .acr.env ACR_PASSWORD "" optional
 
+# 从 docker-compose.yml 读取指定服务的 image 全名（读不到则输出空）
+compose_image() {
+  [ -f docker-compose.yml ] || return 0
+  awk -v svc="$1" '
+    $0 ~ "^[[:space:]]*" svc ":[[:space:]]*$" { in_svc = 1; next }
+    in_svc && $1 == "image:" { print $2; exit }
+    in_svc && /^[^[:space:]]/ { in_svc = 0 }
+  ' docker-compose.yml 2>/dev/null || true
+}
+
+# 从 image 全名中取仓库名（去掉 registry 前缀与 tag）
+repo_from_image() {
+  local name="${1##*/}"
+  printf '%s' "${name%%:*}"
+}
+
 echo "==> 检查 Docker 镜像仓库连通性 ..."
 # registry 复用上面已取到的 ACR_REGISTRY（.env 优先、.acr.env 回退），避免两处取值逻辑不一致
 registry="$registry_value"
@@ -216,8 +225,14 @@ else
   if [ -z "$namespace" ]; then
     warn "[提示] ACR_REGISTRY 未包含命名空间，跳过镜像可读性检查"
   else
-    # 镜像仓库名需与 docker-compose.yml 中的 image 保持一致，可通过环境变量覆盖；
+    # 镜像仓库名以 docker-compose.yml 的 image 为准（环境变量 BACKEND_IMAGE_REPO / FRONTEND_IMAGE_REPO 可显式覆盖），
+    # 避免脚本里的名字与实际部署的镜像不一致而误报；
     # backend 与 frontend 的 tag 各自独立，避免前端镜像被按后端 tag 去查
+    compose_backend="$(compose_image backend)"
+    compose_frontend="$(compose_image frontend)"
+    [ -n "$compose_backend" ] && BACKEND_IMAGE_REPO="$(repo_from_image "$compose_backend")"
+    [ -n "$compose_frontend" ] && FRONTEND_IMAGE_REPO="$(repo_from_image "$compose_frontend")"
+
     for pair in "${BACKEND_IMAGE_REPO%%:*}:${BACKEND_IMAGE_TAG%%:*}" "${FRONTEND_IMAGE_REPO%%:*}:${FRONTEND_IMAGE_TAG%%:*}"; do
       repo="${pair%%:*}"
       tag="${pair#*:}"
@@ -252,18 +267,23 @@ if ! docker info >/dev/null 2>&1; then
 elif [ -z "$compose_cmd" ]; then
   fail "[错误] 未找到 docker compose 命令"
 else
-  # stderr 与 stdout 分开捕获，失败时给出真实原因
-  if ids="$($compose_cmd ps -q 2>/tmp/check-env-compose.err)"; then
-    count="$(printf '%s' "$ids" | grep -c . || true)"
-    if [ "${count:-0}" -gt 0 ]; then
-      echo "[就绪] 共有 ${count} 个容器处于运行状态"
-    else
-      warn "[提示] 没有正在运行的容器"
+  # stderr 与 stdout 分开捕获，失败时给出真实原因；
+  # 只取容器 ID（-q），避免表头/表尾文本干扰「是否有运行中容器」的判断
+  err_file="$(mktemp)"
+  ids_file="$(mktemp)"
+  if ! $compose_cmd ps -q --status running >"$ids_file" 2>"$err_file"; then
+    # v1 的 docker-compose 不支持 --status，退回不带过滤的 ps -q
+    if ! $compose_cmd ps -q >"$ids_file" 2>"$err_file"; then
+      fail "[错误] ${compose_cmd} ps 执行失败：$(head -1 "$err_file" 2>/dev/null)"
     fi
-  else
-    fail "[错误] ${compose_cmd} ps 执行失败：$(head -1 /tmp/check-env-compose.err 2>/dev/null)"
   fi
-  rm -f /tmp/check-env-compose.err
+  count="$(grep -c . "$ids_file" 2>/dev/null || true)"
+  if [ "${count:-0}" -gt 0 ]; then
+    echo "[就绪] 共有 ${count} 个容器处于运行状态"
+  else
+    warn "[提示] 没有正在运行的容器"
+  fi
+  rm -f "$err_file" "$ids_file"
 fi
 
 echo "==> 检查密钥文件权限与 git 跟踪 ..."
