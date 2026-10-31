@@ -10,4 +10,6 @@ COPY . .
 RUN pnpm build
 
 FROM nginx:1.27-alpine
+# 覆盖默认站点配置：加入 history 路由回退，避免深链接刷新 404
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html

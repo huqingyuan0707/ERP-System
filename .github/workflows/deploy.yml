@@ -263,9 +263,9 @@ jobs:
           script: |
             set -euo pipefail
             cd /root/erp
-            registry="$(printf '%s' '{{ env.acr_registry_b64 }}' | base64 -d)"
-            username="$(printf '%s' '{{ env.acr_user_b64 }}' | base64 -d)"
-            password="$(printf '%s' '{{ env.acr_pass_b64 }}' | base64 -d)"
+            registry="$(printf '%s' '${{ env.acr_registry_b64 }}' | base64 -d)"
+            username="$(printf '%s' '${{ env.acr_user_b64 }}' | base64 -d)"
+            password="$(printf '%s' '${{ env.acr_pass_b64 }}' | base64 -d)"
 
             # ACR_REGISTRY 非敏感：写进 .env，供 docker-compose 拼出镜像名
             if grep -q '^ACR_REGISTRY=' .env; then

@@ -12,12 +12,16 @@ cd "$PROJECT_DIR"
 
 echo "==> 更新目录：$PROJECT_DIR"
 
-# 1) 拉取最新代码（仅 fast-forward；本地有改动请先提交或 stash）
+# 1) 同步最新代码
+#    用 fetch + reset --hard：仓库以远端为准，避免服务器上手工改动过的文件
+#    导致 git pull 报 "Your local changes would be overwritten"；
+#    被 .gitignore 忽略的文件（.env / .acr.env）不受影响，会原样保留。
 if [ -d .git ]; then
-  echo "==> git pull ..."
-  git pull --ff-only
+  echo "==> git fetch + reset --hard origin/main ..."
+  git fetch origin main
+  git reset --hard origin/main
 else
-  echo "==> 非 git 仓库，跳过 pull（代码需自行同步）"
+  echo "==> 非 git 仓库，跳过同步（代码需自行同步）"
 fi
 
 # 2) 重新生成占位密钥（已有真实值则保留，不会覆盖）
