@@ -139,18 +139,51 @@ npm run lint                                          # ESLint
 
 ## Docker 部署
 
-仓库提供了 `docker-compose.yml`（PostgreSQL / Redis / MinIO / 后端 / Celery / 前端 / Nginx）。
+仓库提供 `docker-compose.yml`（PostgreSQL / Redis / MinIO / 后端 / 前端 / Nginx）与一键部署脚本（`scripts/`）。
 
-```powershell
-# 根目录准备 .env，至少包含：
-# DB_PASSWORD=...
-# MINIO_USER=...
-# MINIO_PASSWORD=...
+> 说明：项目后端当前使用本地 `exports/` 目录存储导出文件，未实际接入 MinIO，compose 中的 minio 服务仅作后续扩展保留。
 
+### 一键部署（推荐）
+
+在服务器项目根目录执行：
+
+```bash
+bash scripts/deploy.sh
+```
+
+`deploy.sh` 会自动：缺 `.env` 时从 `.env.example` 复制 → 调用 `gen-env-secrets.sh` 生成强随机密钥（仅覆盖 `change_me` 占位值）→ `docker compose up -d --build` → 轮询后端健康检查（postgres 就绪后后端自动建表 + 写入种子数据）。
+
+### 手动部署
+
+```bash
+cp .env.example .env        # 再手动改 DB_PASSWORD / SECRET_KEY / MINIO_PASSWORD 为强值
 docker compose up -d --build
 ```
 
-> 注意：Compose 中的 Nginx 服务会挂载 `./nginx/nginx.conf` 与 `./nginx/certs`，使用前需先补齐这两个路径；`app/tasks`（Celery 任务）也仍在完善中。
+启动后访问 `http://<服务器IP>/`，默认管理员 `admin / admin123`（请立即修改）。
+
+### 部署辅助脚本
+
+| 脚本 | 作用 |
+|------|------|
+| `scripts/deploy.sh` | 一键：准备 `.env` + 强密钥 + 构建启动 + 健康检查 |
+| `scripts/gen-env-secrets.sh [env路径]` | 为 `.env` 生成 48 位强随机 `DB_PASSWORD`/`SECRET_KEY`/`MINIO_PASSWORD` |
+| `scripts/setup-https.sh <域名>` | certbot 申请 Let's Encrypt 证书并启用 HTTPS（需域名 A 记录指向本机、80 端口放通） |
+| `scripts/backup.sh [保留份数]` | 停止服务前自动备份 PostgreSQL 与 Redis 数据，可保留最近 N 份（默认 7） |
+
+### 启用 HTTPS
+
+```bash
+bash scripts/setup-https.sh your.domain.com
+```
+
+脚本会申请证书、写入 HTTPS 版 `nginx/nginx.conf`（80→443 跳转）并热重载；证书 90 天有效，续期后需重新复制到 `nginx/certs` 并 `nginx -s reload`（脚本末尾给出 `--deploy-hook` 写法）。
+
+### 数据持久化与备份
+
+- 数据均在命名卷：`pgdata`（PostgreSQL）、`redisdata`（Redis）、`miniodata`（MinIO），不随容器删除丢失。
+- 一键备份：`bash scripts/backup.sh`（默认保留最近 7 份，备份写入 `backups/YYYYMMDD-HHMMSS/`）。
+- 恢复示例：解压对应备份目录后 `docker compose exec -T postgres psql -U erp erp < pg.sql`。
 
 ---
 

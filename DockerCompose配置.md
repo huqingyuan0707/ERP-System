@@ -145,7 +145,7 @@ MINIO_USER=minioadmin
 MINIO_PASSWORD=change_me
 DATABASE_URL=postgresql+asyncpg://erp:change_me@postgres:5432/erp
 REDIS_URL=redis://redis:6379/0
-JWT_SECRET=change_me
+SECRET_KEY=change_me
 ```
 
 ## 6. 部署步骤
