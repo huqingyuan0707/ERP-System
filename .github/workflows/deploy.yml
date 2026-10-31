@@ -142,7 +142,7 @@ jobs:
         run: |
           set -uo pipefail
           for ns in ${CANDIDATES}; do
-            for repo in erp-backend erp-frontend; do
+            for repo in erpa-backend erpa-frontend; do
               if docker manifest inspect "${ACR_HOST}/${ns}/${repo}:latest" >/dev/null 2>&1; then
                 echo "OK   ${ACR_HOST}/${ns}/${repo}:latest 可读"
               else
@@ -175,7 +175,7 @@ jobs:
           set -uo pipefail
           ok=""
           for ns in ${CANDIDATES}; do
-            ref="${ACR_HOST}/${ns}/erp-backend:${ACR_TAG}"
+            ref="${ACR_HOST}/${ns}/erpa-backend:${ACR_TAG}"
             echo "==> 尝试推送到 ${ref}"
             if ! docker tag "erp-backend:${ACR_TAG}" "${ref}"; then
               echo "打标签失败，跳过该候选"
@@ -192,7 +192,7 @@ jobs:
             echo "::error::所有候选命名空间推送失败（${CANDIDATES}）"
             echo "排查顺序："
             echo "1) ACR 控制台确认命名空间存在，且区域与 ${ACR_HOST} 一致（凭证是区域级的）"
-            echo "2) 在该命名空间下手动创建镜像仓库 erp-backend 与 erp-frontend（ACR 不会在 docker push 时自动建仓库，仓库不存在即返回 denied）"
+            echo "2) 在该命名空间下手动创建镜像仓库 erpa-backend 与 erpa-frontend（ACR 不会在 docker push 时自动建仓库，仓库不存在即返回 denied）"
             echo "3) 确认 ACR_USERNAME 是 ACR 实例「访问凭证」里的用户名，不是 RAM 用户名"
             echo "4) 企业版实例：在 ACR「授权管理」给该账号授予该命名空间的 push/pull 权限"
             echo "5) 若以上都正常，请把 ACR_REGISTRY 显式设置为 <地址>/<命名空间>，避免探测歧义"
@@ -200,7 +200,7 @@ jobs:
           fi
 
           echo "namespace=${ok}" >> "$GITHUB_OUTPUT"
-          echo "推送成功：${ACR_HOST}/${ok}/erp-backend:${ACR_TAG}"
+          echo "推送成功：${ACR_HOST}/${ok}/erpa-backend:${ACR_TAG}"
 
       - name: 推送 frontend 镜像
         env:
@@ -209,7 +209,7 @@ jobs:
           ACR_TAG: ${{ env.ACR_TAG }}
         run: |
           set -euo pipefail
-          ref="${ACR_HOST}/${NAMESPACE}/erp-frontend:${ACR_TAG}"
+          ref="${ACR_HOST}/${NAMESPACE}/erpa-frontend:${ACR_TAG}"
           docker tag "erp-frontend:${ACR_TAG}" "${ref}"
           if ! docker push "${ref}"; then
             echo "::error::推送失败：${ref}"
