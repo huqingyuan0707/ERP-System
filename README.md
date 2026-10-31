@@ -209,7 +209,14 @@ bash scripts/setup-https.sh your.domain.com
 | `ACR_REGISTRY` | `registry.cn-hangzhou.aliyuncs.com/erp-prod` | 镜像前缀（含命名空间）；也可改用 `ACR_HOST` + `ACR_NAMESPACE` 拆分填写 |
 | `ACR_USERNAME` | `1234567890123456` | ACR 实例「访问凭证」的用户名，不是 RAM 用户名 |
 | `ACR_PASSWORD` | `********` | ACR 固定密码 / 临时令牌 |
-| `DEPLOY_HOST` / `DEPLOY_USER` / `DEPLOY_SSH_KEY` | — | 服务器 SSH 连接信息 |
+| `DEPLOY_HOST` | `1.2.3.4` | 服务器 IP 或域名 |
+| `DEPLOY_USER` | `root` | SSH 登录用户 |
+| `DEPLOY_SSH_KEY` | `-----BEGIN OPENSSH PRIVATE KEY----- …` | **SSH 私钥全文**（不是 `.pub` 公钥），以「粘贴为纯文本」方式填入；流水线会自动清理 CRLF 换行 |
+| `DEPLOY_PORT` | `22` | 可选，SSH 端口，默认 22 |
+| `DEPLOY_REPO_TOKEN` | `ghp_xxx` | 可选，仓库访问令牌；仅当服务器上还没有代码目录时，用于自动 clone 到 `/root/erp` |
+
+> `DEPLOY_SSH_KEY` 填错时，流水线会在「校验部署密钥」步骤直接给出提示；
+> 若日志出现 `ssh: no key found`，说明该 Secret 为空或内容不是私钥（常见于误填 `.pub` 公钥）。
 
 流水线会先解析并校验上述配置（缺失时直接给出明确报错），再登录 ACR、构建、推送；推送失败时按命名空间 → 区域 → 仓库是否存在 → 推送权限的顺序给出排查提示。
 
