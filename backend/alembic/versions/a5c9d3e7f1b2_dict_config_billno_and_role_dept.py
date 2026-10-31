@@ -80,10 +80,30 @@ def _timestamp_column(name: str) -> sa.Column:
     )
 
 
+def _create_table(name: str, *columns: sa.Column, **kwargs: object) -> None:
+    """建表；表已存在则跳过（兼容 init_db 先建表、迁移后补的场景）。"""
+    conn = op.get_bind()
+    if sa.inspect(conn).has_table(name):
+        return
+    op.create_table(name, *columns, **kwargs)
+
+
+def _create_index(name: str, table: str, columns: list[str], **kwargs: object) -> None:
+    """建索引；同名索引已存在则跳过（表由 create_all 建出时索引已存在）。"""
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    if not inspector.has_table(table):
+        return
+    existing = {idx["name"] for idx in inspector.get_indexes(table)}
+    if name in existing:
+        return
+    op.create_index(name, table, columns, **kwargs)
+
+
 def upgrade() -> None:
     conn = op.get_bind()
 
-    op.create_table(
+    _create_table(
         "sys_role_dept",
         sa.Column(
             "role_id",
@@ -99,7 +119,7 @@ def upgrade() -> None:
         ),
     )
 
-    op.create_table(
+    _create_table(
         "sys_dict_type",
         sa.Column("id", _BIGINT_PK, primary_key=True, autoincrement=True),
         sa.Column("code", sa.String(64), nullable=False, index=True),
@@ -111,12 +131,12 @@ def upgrade() -> None:
         _timestamp_column("created_at"),
         _timestamp_column("updated_at"),
     )
-    op.create_index(
+    _create_index(
         "uq_dict_type_code", "sys_dict_type", ["code"], unique=True,
         sqlite_where=sa.text("is_deleted = 0"), postgresql_where=sa.text("is_deleted = false"),
     )
 
-    op.create_table(
+    _create_table(
         "sys_dict_item",
         sa.Column("id", _BIGINT_PK, primary_key=True, autoincrement=True),
         sa.Column("type_code", sa.String(64), nullable=False, index=True),
@@ -129,12 +149,12 @@ def upgrade() -> None:
         _timestamp_column("created_at"),
         _timestamp_column("updated_at"),
     )
-    op.create_index(
+    _create_index(
         "uq_dict_item", "sys_dict_item", ["type_code", "value"], unique=True,
         sqlite_where=sa.text("is_deleted = 0"), postgresql_where=sa.text("is_deleted = false"),
     )
 
-    op.create_table(
+    _create_table(
         "sys_config",
         sa.Column("id", _BIGINT_PK, primary_key=True, autoincrement=True),
         sa.Column("key", sa.String(128), nullable=False, index=True),
@@ -145,12 +165,12 @@ def upgrade() -> None:
         _timestamp_column("created_at"),
         _timestamp_column("updated_at"),
     )
-    op.create_index(
+    _create_index(
         "uq_config_key", "sys_config", ["key"], unique=True,
         sqlite_where=sa.text("is_deleted = 0"), postgresql_where=sa.text("is_deleted = false"),
     )
 
-    op.create_table(
+    _create_table(
         "sys_bill_no_seq",
         sa.Column("id", _BIGINT_PK, primary_key=True, autoincrement=True),
         sa.Column("biz_key", sa.String(64), nullable=False),
@@ -164,8 +184,8 @@ def upgrade() -> None:
         if not _exists(conn, "SELECT 1 FROM sys_dict_type WHERE code = :code", {"code": code}):
             conn.execute(
                 sa.text(
-                    "INSERT INTO sys_dict_type (code, name, status, is_deleted)"
-                    " VALUES (:code, :name, 1, 0)"
+                    "INSERT INTO sys_dict_type (code, name, status, version, is_deleted)"
+                    " VALUES (:code, :name, 1, 1, false)"
                 ),
                 {"code": code, "name": name},
             )
@@ -178,7 +198,7 @@ def upgrade() -> None:
             conn.execute(
                 sa.text(
                     "INSERT INTO sys_dict_item (type_code, label, value, sort, status, is_deleted)"
-                    " VALUES (:tc, :label, :v, :sort, 1, 0)"
+                    " VALUES (:tc, :label, :v, :sort, 1, false)"
                 ),
                 {"tc": type_code, "label": label, "v": value, "sort": sort},
             )
@@ -189,7 +209,7 @@ def upgrade() -> None:
             conn.execute(
                 sa.text(
                     "INSERT INTO sys_config (key, value, name, is_deleted)"
-                    " VALUES (:key, :v, :name, 0)"
+                    " VALUES (:key, :v, :name, false)"
                 ),
                 {"key": key, "v": value, "name": name},
             )
@@ -203,7 +223,7 @@ def upgrade() -> None:
                     "INSERT INTO sys_permission"
                     " (name, type, perm_code, parent_id, sort, is_deleted)"
                     " VALUES (:name, 3, :code,"
-                    " (SELECT id FROM sys_permission WHERE perm_code = :parent), 9, 0)"
+                    " (SELECT id FROM sys_permission WHERE perm_code = :parent), 9, false)"
                 ),
                 {"name": name, "code": perm_code, "parent": parent},
             )

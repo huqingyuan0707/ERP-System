@@ -60,7 +60,7 @@ def upgrade() -> None:
                 "INSERT INTO sys_permission"
                 " (name, type, perm_code, parent_id, sort, is_deleted)"
                 " VALUES (:name, 3, :code,"
-                " (SELECT id FROM sys_permission WHERE perm_code = 'sys:role:list'), :sort, 0)"
+                " (SELECT id FROM sys_permission WHERE perm_code = 'sys:role:list'), :sort, false)"
             ),
             {"name": name, "code": perm_code, "sort": sort},
         )

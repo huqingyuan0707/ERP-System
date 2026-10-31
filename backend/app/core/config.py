@@ -29,5 +29,9 @@ class Settings(BaseSettings):
 
     DEBUG: bool = True
 
+    # 测试环境开关：为 True 时数据库连接池使用 NullPool
+    # （测试每个用例独立事件循环，池化连接跨循环复用会报 'NoneType' object has no attribute 'send'）
+    TESTING: bool = False
+
 
 settings = Settings()

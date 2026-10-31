@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, false, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -31,10 +31,12 @@ class UserMixin:
 class SoftDeleteMixin:
     """逻辑删除标记。"""
 
-    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
 
 
 class VersionMixin:
     """乐观锁版本号。"""
 
-    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)

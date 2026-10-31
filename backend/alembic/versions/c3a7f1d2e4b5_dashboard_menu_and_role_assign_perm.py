@@ -25,14 +25,14 @@ _INSERT_DASHBOARD = sa.text(
     "INSERT INTO sys_permission"
     " (name, type, perm_code, route_path, component, icon, sort, is_deleted)"
     " VALUES ('经营看板', 2, 'rpt:dashboard:list',"
-    " '/dashboard', 'dashboard/DashboardPage', 'Odometer', 0, 0)"
+    " '/dashboard', 'dashboard/DashboardPage', 'Odometer', 0, false)"
 )
 
 _INSERT_ROLE_ASSIGN = sa.text(
     "INSERT INTO sys_permission"
     " (name, type, perm_code, parent_id, sort, is_deleted)"
     " VALUES ('角色分配', 3, 'sys:role:assign',"
-    " (SELECT id FROM sys_permission WHERE perm_code = 'sys:role:list'), 5, 0)"
+    " (SELECT id FROM sys_permission WHERE perm_code = 'sys:role:list'), 5, false)"
 )
 
 _GRANT = sa.text(

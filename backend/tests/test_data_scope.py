@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 from sqlalchemy import delete, select
 
-from app.core.data_scope import apply_scope, allows, resolve_scope
+from app.core.data_scope import allows, apply_scope, resolve_scope
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal
 from app.main import app
@@ -110,8 +110,36 @@ async def _cleanup(
         await session.execute(delete(SysRoleDept).where(SysRoleDept.role_id == role_id))
         await session.execute(delete(SysRole).where(SysRole.id == role_id))
         await session.execute(delete(BdGoods).where(BdGoods.name.in_(goods_names)))
-        for dept_id in dept_ids:
-            await session.execute(delete(SysDept).where(SysDept.id == dept_id))
+        # 删除部门：先删子部门再删父部门
+        # PostgreSQL 强制外键，父部门被子部门引用时直接删会违反约束
+        if dept_ids:
+            # 先清理挂在这些部门下的用户及其角色关联（否则删部门会违反 sys_user 外键）
+            await session.execute(
+                delete(SysUserRole).where(
+                    SysUserRole.user_id.in_(
+                        select(SysUser.id).where(SysUser.dept_id.in_(dept_ids))
+                    )
+                )
+            )
+            await session.execute(delete(SysUser).where(SysUser.dept_id.in_(dept_ids)))
+            dept_rows = (
+                await session.execute(
+                    select(SysDept.id, SysDept.parent_id).where(SysDept.id.in_(dept_ids))
+                )
+            ).all()
+            parent_map = {row.id: row.parent_id for row in dept_rows}
+
+            def _depth(dept_id: int) -> int:
+                """计算部门在待删集合中的层级深度（用于倒序删除）。"""
+                depth = 0
+                current = parent_map.get(dept_id)
+                while current is not None and current in parent_map and depth < 20:
+                    depth += 1
+                    current = parent_map.get(current)
+                return depth
+
+            for dept_id in sorted(dept_ids, key=_depth, reverse=True):
+                await session.execute(delete(SysDept).where(SysDept.id == dept_id))
         await session.commit()
 
 
