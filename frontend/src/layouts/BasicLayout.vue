@@ -120,19 +120,21 @@ const submitPwdChange = async (): Promise<void> => {
             <el-breadcrumb-item>{{ route.meta.title }}</el-breadcrumb-item>
           </el-breadcrumb>
         </div>
-        <el-dropdown>
-          <span class="user-info">
-            <el-icon><User /></el-icon>
-            {{ userStore.user?.realName || userStore.user?.username }}
-          </span>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item @click="handleChangePassword">修改密码</el-dropdown-item>
-              <el-dropdown-item divided @click="handleLogout">退出登录</el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-        <TaskDrawer />
+        <div class="header-right">
+          <el-dropdown>
+            <span class="user-info">
+              <el-icon><User /></el-icon>
+              {{ userStore.user?.realName || userStore.user?.username }}
+            </span>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item @click="handleChangePassword">修改密码</el-dropdown-item>
+                <el-dropdown-item divided @click="handleLogout">退出登录</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
+          <TaskDrawer />
+        </div>
       </el-header>
       <el-main class="main">
         <RouterView />
@@ -223,6 +225,11 @@ const submitPwdChange = async (): Promise<void> => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 .collapse-btn {
   font-size: 20px;

@@ -1,0 +1,48 @@
+name: Deploy ERP
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+env:
+  # 镜像仓库地址，例如 registry.cn-hangzhou.aliyuncs.com/your-namespace
+  ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+  BACKEND_IMAGE: ${{ secrets.ACR_REGISTRY }}/erp-backend:latest
+  FRONTEND_IMAGE: ${{ secrets.ACR_REGISTRY }}/erp-frontend:latest
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 登录阿里云 ACR
+        run: echo "${{ secrets.ACR_PASSWORD }}" | docker login "${{ secrets.ACR_REGISTRY }}" --username "${{ secrets.ACR_USERNAME }}" --password-stdin
+
+      - name: 构建并推送 backend 镜像
+        run: |
+          docker build -t "$BACKEND_IMAGE" ./backend
+          docker push "$BACKEND_IMAGE"
+
+      - name: 构建并推送 frontend 镜像
+        run: |
+          docker build -t "$FRONTEND_IMAGE" ./frontend
+          docker push "$FRONTEND_IMAGE"
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: SSH 登录服务器并拉取运行
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            cd /root/erp
+            # 把 ACR 地址写入 .env，供 docker-compose 拼出镜像名
+            grep -q '^ACR_REGISTRY=' .env && sed -i "s|^ACR_REGISTRY=.*|ACR_REGISTRY=${{ secrets.ACR_REGISTRY }}|" .env || echo "ACR_REGISTRY=${{ secrets.ACR_REGISTRY }}" >> .env
+            bash scripts/update.sh

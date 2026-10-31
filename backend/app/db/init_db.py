@@ -32,6 +32,9 @@ async def init_db() -> None:
 async def _seed(session: AsyncSession) -> None:
     exists = await session.scalar(select(func.count()).select_from(SysUser))
     if exists:
+        # 已有数据库不重复写入基础数据，只补齐后续新增的权限项，保证按钮权限可用
+        await _ensure_permissions(session)
+        await session.commit()
         return
 
     dept = SysDept(name="总公司", parent_id=None, leader="系统管理员", sort=1, status=1)
@@ -118,6 +121,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     role_menu = next(menu for menu in menus if menu.perm_code == "sys:role:list")
     goods_menu = next(menu for menu in menus if menu.perm_code == "base:goods:list")
     warehouse_menu = next(menu for menu in menus if menu.perm_code == "base:warehouse:list")
+    supplier_menu = next(menu for menu in menus if menu.perm_code == "base:supplier:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -138,6 +142,9 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("新增仓库", "base:warehouse:add", warehouse_menu.id, 1),
         _button("修改仓库", "base:warehouse:edit", warehouse_menu.id, 2),
         _button("删除仓库", "base:warehouse:delete", warehouse_menu.id, 3),
+        _button("新增供应商", "base:supplier:add", supplier_menu.id, 1),
+        _button("修改供应商", "base:supplier:edit", supplier_menu.id, 2),
+        _button("删除供应商", "base:supplier:delete", supplier_menu.id, 3),
         _button("查看操作日志", "sys:log:view", user_menu.id, 6),
         _button("查看异步任务", "sys:task:view", user_menu.id, 7),
         _button("超级权限", "*", dir_sys.id, 99),
@@ -291,4 +298,78 @@ async def _seed_base_data(session: AsyncSession) -> None:
             ) in goods_rows
         ]
     )
+    await session.flush()
+
+
+async def _ensure_permissions(session: AsyncSession) -> None:
+    """幂等补齐缺失的权限项，并授权给超级管理员角色。
+
+    种子数据只在首次初始化时写入，后续新增的权限项需要在此补齐，
+    否则已初始化的数据库会缺少按钮权限，前端 v-perm 会隐藏对应操作。
+    """
+    # 供应商菜单：更早版本建立的数据库可能还没有这一项
+    supplier_menu = await session.scalar(
+        select(SysPermission).where(SysPermission.perm_code == "base:supplier:list")
+    )
+    if supplier_menu is None:
+        # 找到基础资料目录，作为菜单的父级
+        dir_base = await session.scalar(
+            select(SysPermission).where(
+                SysPermission.type == 1, SysPermission.route_path == "/base"
+            )
+        )
+        supplier_menu = SysPermission(
+            name="供应商管理",
+            type=2,
+            perm_code="base:supplier:list",
+            route_path="/base/supplier",
+            component="base/supplier/index",
+            parent_id=dir_base.id if dir_base is not None else None,
+            sort=3,
+        )
+        session.add(supplier_menu)
+        await session.flush()
+
+    # 供应商按钮权限：新增、修改、删除
+    button_specs = (
+        ("新增供应商", "base:supplier:add", 1),
+        ("修改供应商", "base:supplier:edit", 2),
+        ("删除供应商", "base:supplier:delete", 3),
+    )
+    for name, perm_code, sort in button_specs:
+        exists = await session.scalar(
+            select(SysPermission.perm_code).where(SysPermission.perm_code == perm_code)
+        )
+        if exists is None:
+            session.add(
+                SysPermission(
+                    name=name,
+                    type=3,
+                    perm_code=perm_code,
+                    parent_id=supplier_menu.id,
+                    sort=sort,
+                )
+            )
+    await session.flush()
+
+    # 超级管理员默认拥有全部权限，补齐权限项后需要同步授权
+    admin_role = await session.scalar(select(SysRole).where(SysRole.code == "admin"))
+    if admin_role is None:
+        return
+    supplier_perms = list(
+        (
+            await session.execute(
+                select(SysPermission).where(SysPermission.perm_code.like("base:supplier:%"))
+            )
+        ).scalars().all()
+    )
+    for perm in supplier_perms:
+        granted = await session.scalar(
+            select(SysRolePermission.role_id).where(
+                SysRolePermission.role_id == admin_role.id,
+                SysRolePermission.permission_id == perm.id,
+            )
+        )
+        if granted is None:
+            session.add(SysRolePermission(role_id=admin_role.id, permission_id=perm.id))
     await session.flush()
