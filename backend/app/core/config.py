@@ -14,7 +14,8 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "企业ERP系统"
     API_V1_PREFIX: str = "/api/v1"
 
-    DATABASE_URL: str = "sqlite+aiosqlite:///./erp.db"
+    # 默认值仅作占位，真实连接串写在 backend/.env（已被 .gitignore 忽略），避免口令入库
+    DATABASE_URL: str = "postgresql+asyncpg://erp:change_me@127.0.0.1:5432/erp"
 
     SECRET_KEY: str = "change_me"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
