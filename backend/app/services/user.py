@@ -7,7 +7,9 @@
   - 操作日志（所有增删改操作都要记录，与业务在同一个事务里提交）。
 
 层级关系：
-  Router（接口层，system.py） -> Service（业务层，本文件） -> Repository（数据访问层，repositories/user.py）
+  Router（接口层，system.py）
+    -> Service（业务层，本文件）
+    -> Repository（数据访问层，repositories/user.py）
 """
 
 import json

@@ -19,6 +19,7 @@ from app.schemas.oper_log import OperLogOut, OperLogQuery
 from app.services.login_log import LoginLogService
 from app.services.oper_log import OperLogService
 
+
 router = APIRouter(prefix="/sys", tags=["系统日志"])
 
 # 日志查询需要的权限码

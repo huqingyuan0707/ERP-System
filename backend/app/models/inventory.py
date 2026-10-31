@@ -72,9 +72,10 @@ class InvStockFlow(TimestampMixin, Base):
     goods_id: Mapped[int] = mapped_column(
         BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False, index=True
     )
-    flow_type: Mapped[str] = mapped_column(
-        String(32), nullable=False
-    )  # purchase_in/purchase_return/sale_out/sale_return/transfer_in/transfer_out/check_gain/check_loss
+    # 流水类型取值范围：
+    # purchase_in/purchase_return/sale_out/sale_return/
+    # transfer_in/transfer_out/check_gain/check_loss
+    flow_type: Mapped[str] = mapped_column(String(32), nullable=False)
     direction: Mapped[int] = mapped_column(Integer, nullable=False)  # 1=入库, -1=出库
     qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)  # 变动数量
     before_qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)
@@ -84,5 +85,6 @@ class InvStockFlow(TimestampMixin, Base):
     )  # 该次结转单位成本
     source_type: Mapped[str | None] = mapped_column(String(32))  # 来源单据类型
     source_no: Mapped[str | None] = mapped_column(String(64), index=True)  # 来源单号
-    biz_time: Mapped[str] = mapped_column(String(32), nullable=False, index=True)  # 业务日期 YYYYMMDD
+    # 业务日期，格式 YYYYMMDD，用于按日汇总
+    biz_time: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     remark: Mapped[str | None] = mapped_column(String(255))

@@ -16,6 +16,7 @@ from app.core.cache import cache_get, cache_set
 from app.core.exceptions import AppException, ErrorCode
 from app.models.sys import SysBillNoSeq, SysConfig
 
+
 BILLNO_KEY_PREFIX = "billno."
 BILLNO_DEFAULT_WIDTH = 4
 BILLNO_MAX_WIDTH = 8

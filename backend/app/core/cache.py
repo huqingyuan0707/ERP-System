@@ -10,6 +10,7 @@ from typing import Any
 
 from app.core.config import settings
 
+
 logger = logging.getLogger("app.cache")
 
 DEFAULT_TTL = 300

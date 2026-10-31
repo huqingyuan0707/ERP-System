@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.models.sys import SysOperLog
 from app.repositories.base import BaseRepository
