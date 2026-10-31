@@ -92,8 +92,12 @@ jobs:
               fi
             fi
             # 个人版 ACR：登录用户名有时就是命名空间，作为兜底候选
-            if [ -z "${candidates}" ] && printf '%s' "$user" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
-              candidates="${user}"
+            if [ -z "${candidates}" ]; then
+              if printf '%s' "$user" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*$'; then
+                candidates="${user}"
+              else
+                echo "::warning::ACR_USERNAME 含非法字符（不能是邮箱/中文），无法作为命名空间候选；请填 ACR「访问凭证」里的用户名"
+              fi
             fi
           fi
 
@@ -110,6 +114,7 @@ jobs:
 
           if [ -z "${candidates}" ]; then
             echo "::error::无法确定可用命名空间。请把 Secret ACR_REGISTRY 显式设为 <地址>/<命名空间>，例如 ${host}/erp"
+            echo "::error::命名空间在 ACR 控制台左侧「命名空间」列表可见；个人版地址形如 crpi-xxxx.cn-<区域>.personal.cr.aliyuncs.com/<命名空间>"
             exit 1
           fi
 
