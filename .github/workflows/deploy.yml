@@ -3,38 +3,148 @@ name: Deploy ERP
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '镜像标签（默认 latest，也可填 commit SHA）'
+        required: false
+        default: 'latest'
 
 env:
-  # 镜像仓库地址，例如 registry.cn-hangzhou.aliyuncs.com/your-namespace
+  # 兼容两种 Secrets 写法：
+  #   1) ACR_REGISTRY  = registry.cn-hangzhou.aliyuncs.com/<命名空间>（含命名空间）
+  #   2) ACR_HOST + ACR_NAMESPACE = registry.cn-hangzhou.aliyuncs.com  +  <命名空间>
   ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
-  BACKEND_IMAGE: ${{ secrets.ACR_REGISTRY }}/erp-backend:latest
-  FRONTEND_IMAGE: ${{ secrets.ACR_REGISTRY }}/erp-frontend:latest
+  ACR_HOST: ${{ secrets.ACR_HOST }}
+  ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+  ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+  ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+  ACR_TAG: ${{ github.event.inputs.tag || 'latest' }}
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      repository: ${{ steps.acr.outputs.repository }}
+      host: ${{ steps.acr.outputs.host }}
+      namespace: ${{ steps.acr.outputs.namespace }}
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: 解析并校验 ACR 配置
+        id: acr
+        run: |
+          set -uo pipefail
+          if [ -n "${ACR_HOST}" ] && [ -n "${ACR_NAMESPACE}" ]; then
+            host="${ACR_HOST%/}"
+            ns="${ACR_NAMESPACE#/}"
+          elif [ -n "${ACR_REGISTRY}" ]; then
+            host="${ACR_REGISTRY%%/*}"
+            ns="${ACR_REGISTRY#*/}"
+          else
+            echo "::error::缺少 ACR 配置，请在仓库 Settings → Secrets 中设置 ACR_REGISTRY（或 ACR_HOST + ACR_NAMESPACE）"
+            exit 1
+          fi
+
+          if [ -z "${ns}" ] || [ "${ns}" = "${host}" ]; then
+            echo "::error::ACR_REGISTRY 必须包含命名空间，格式 registry.<区域>.aliyuncs.com/<命名空间>，当前解析结果 host=${host} namespace=${ns}"
+            exit 1
+          fi
+
+          case "${host}" in
+            registry.*.aliyuncs.com) : ;;
+            *) echo "::warning::ACR_HOST 通常形如 registry.cn-hangzhou.aliyuncs.com，当前为 ${host}" ;;
+          esac
+
+          if [ -z "${ACR_USERNAME}" ] || [ -z "${ACR_PASSWORD}" ]; then
+            echo "::error::缺少 ACR_USERNAME / ACR_PASSWORD（取自 ACR 实例「访问凭证」）"
+            exit 1
+          fi
+
+          echo "host=${host}" >> "$GITHUB_OUTPUT"
+          echo "namespace=${ns}" >> "$GITHUB_OUTPUT"
+          echo "repository=${host}/${ns}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### ACR 配置"
+            echo "- Registry : ${host}"
+            echo "- Namespace: ${ns}"
+            echo "- 镜像前缀 : ${host}/${ns}"
+            echo "- Tag      : ${ACR_TAG}"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 登录阿里云 ACR
-        run: echo "${{ secrets.ACR_PASSWORD }}" | docker login "${{ secrets.ACR_REGISTRY }}" --username "${{ secrets.ACR_USERNAME }}" --password-stdin
-
-      - name: 构建并推送 backend 镜像
         run: |
-          docker build -t "$BACKEND_IMAGE" ./backend
-          docker push "$BACKEND_IMAGE"
+          set -euo pipefail
+          echo "$ACR_PASSWORD" | docker login "${{ steps.acr.outputs.host }}" --username "$ACR_USERNAME" --password-stdin
 
-      - name: 构建并推送 frontend 镜像
+      - name: 预检镜像仓库是否可访问
         run: |
-          docker build -t "$FRONTEND_IMAGE" ./frontend
-          docker push "$FRONTEND_IMAGE"
+          set -uo pipefail
+          repo_root="${{ steps.acr.outputs.repository }}"
+          for repo in erp-backend erp-frontend; do
+            if docker manifest inspect "${repo_root}/${repo}:${ACR_TAG}" >/dev/null 2>&1; then
+              echo "OK   ${repo_root}/${repo}:${ACR_TAG} 已存在且可读"
+            else
+              echo "::warning::无法读取 ${repo_root}/${repo}:${ACR_TAG}（仓库尚未创建或无读权限）；继续构建，推送失败时按提示处理"
+            fi
+          done
+
+      - name: 构建 backend 镜像
+        run: |
+          set -euo pipefail
+          docker build -t "${{ steps.acr.outputs.repository }}/erp-backend:${{ env.ACR_TAG }}" ./backend
+
+      - name: 构建 frontend 镜像
+        run: |
+          set -euo pipefail
+          docker build -t "${{ steps.acr.outputs.repository }}/erp-frontend:${{ env.ACR_TAG }}" ./frontend
+
+      - name: 推送 backend 镜像
+        run: |
+          set -uo pipefail
+          image="${{ steps.acr.outputs.repository }}/erp-backend:${{ env.ACR_TAG }}"
+          if docker push "$image"; then
+            echo "推送成功：$image"
+          else
+            echo "::error::推送失败：$image（denied: requested access to the resource is denied）"
+            echo "排查顺序："
+            echo "1) ACR 控制台确认命名空间 ${{ steps.acr.outputs.namespace }} 存在，且区域与 ${{ steps.acr.outputs.host }} 一致（凭证是区域级的）"
+            echo "2) 在该命名空间下手动创建镜像仓库 erp-backend 与 erp-frontend（ACR 不会在 docker push 时自动建仓库，仓库不存在即返回 denied）"
+            echo "3) 确认 ACR_USERNAME 是 ACR 实例「访问凭证」里的用户名（通常是账号 ID），而不是 RAM 用户名；密码用固定密码/临时令牌"
+            echo "4) 企业版实例：在 ACR「授权管理」给该 RAM 账号授予该命名空间的 push/pull 权限"
+            exit 1
+          fi
+
+      - name: 推送 frontend 镜像
+        run: |
+          set -uo pipefail
+          image="${{ steps.acr.outputs.repository }}/erp-frontend:${{ env.ACR_TAG }}"
+          if docker push "$image"; then
+            echo "推送成功：$image"
+          else
+            echo "::error::推送失败：$image"
+            echo "排查方式与 backend 相同：命名空间 / 区域 / 仓库是否存在 / 推送权限"
+            exit 1
+          fi
 
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
+      # 凭证先在 CI 侧做 base64，避免密码里的特殊字符破坏远端 shell 脚本
+      - name: 编码服务器端所需配置
+        run: |
+          {
+            echo "acr_registry_b64=$(printf '%s' "$ACR_REGISTRY" | base64 -w0)"
+            echo "acr_user_b64=$(printf '%s' "$ACR_USERNAME" | base64 -w0)"
+            echo "acr_pass_b64=$(printf '%s' "$ACR_PASSWORD" | base64 -w0)"
+          } >> "$GITHUB_ENV"
+        env:
+          ACR_REGISTRY: ${{ needs.build-and-push.outputs.repository }}
+          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+
       - name: SSH 登录服务器并拉取运行
         uses: appleboy/ssh-action@v1.2.0
         with:
@@ -42,7 +152,27 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
+            set -euo pipefail
             cd /root/erp
-            # 把 ACR 地址写入 .env，供 docker-compose 拼出镜像名
-            grep -q '^ACR_REGISTRY=' .env && sed -i "s|^ACR_REGISTRY=.*|ACR_REGISTRY=${{ secrets.ACR_REGISTRY }}|" .env || echo "ACR_REGISTRY=${{ secrets.ACR_REGISTRY }}" >> .env
+            registry="$(printf '%s' '{{ env.acr_registry_b64 }}' | base64 -d)"
+            username="$(printf '%s' '{{ env.acr_user_b64 }}' | base64 -d)"
+            password="$(printf '%s' '{{ env.acr_pass_b64 }}' | base64 -d)"
+
+            # ACR_REGISTRY 非敏感：写进 .env，供 docker-compose 拼出镜像名
+            if grep -q '^ACR_REGISTRY=' .env; then
+              sed -i "s|^ACR_REGISTRY=.*|ACR_REGISTRY=${registry}|" .env
+            else
+              echo "ACR_REGISTRY=${registry}" >> .env
+            fi
+
+            # 凭证单独放 .acr.env（600 权限），不进入 .env，避免被 compose 注入到容器
+            umask 077
+            cat > .acr.env <<EOF
+            ACR_REGISTRY=${registry}
+            ACR_USERNAME=${username}
+            ACR_PASSWORD=${password}
+            EOF
+            sed -i 's/^[[:space:]]*//' .acr.env
+            chmod 600 .acr.env
+
             bash scripts/update.sh

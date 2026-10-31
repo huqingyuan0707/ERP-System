@@ -20,6 +20,9 @@ dist/
 !frontend/.env.production
 !frontend/.env.development
 
+# ACR 登录凭证（服务器端拉取私有镜像用，勿提交）
+.acr.env
+
 # IDE / 系统
 .idea/
 .vscode/

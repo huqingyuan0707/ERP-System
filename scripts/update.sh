@@ -26,6 +26,31 @@ if [ -f scripts/gen-env-secrets.sh ]; then
 fi
 
 # 3) 拉取最新镜像并启动（镜像由 CI 构建推送到 ACR，服务器只拉取运行）
+#    私有仓库必须先 docker login，否则 docker compose pull 会报 denied
+read_env_value() {
+  local key="$1" file="$2" value=""
+  if [ -f "$file" ]; then
+    value="$(grep -E "^${key}=" "$file" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '\r' || true)"
+  fi
+  printf '%s' "$value"
+}
+
+ACR_REGISTRY="${ACR_REGISTRY:-$(read_env_value ACR_REGISTRY .acr.env)}"
+[ -n "$ACR_REGISTRY" ] || ACR_REGISTRY="$(read_env_value ACR_REGISTRY .env)"
+ACR_USERNAME="${ACR_USERNAME:-$(read_env_value ACR_USERNAME .acr.env)}"
+ACR_PASSWORD="${ACR_PASSWORD:-$(read_env_value ACR_PASSWORD .acr.env)}"
+
+if [ -n "$ACR_REGISTRY" ] && [ -n "$ACR_USERNAME" ] && [ -n "$ACR_PASSWORD" ]; then
+  ACR_HOST="${ACR_REGISTRY%%/*}"
+  echo "==> docker login ${ACR_HOST}"
+  if ! printf '%s' "$ACR_PASSWORD" | docker login "$ACR_HOST" --username "$ACR_USERNAME" --password-stdin; then
+    echo "登录 ACR 失败：${ACR_HOST}，请检查 .acr.env 中的 ACR_USERNAME / ACR_PASSWORD" >&2
+    exit 1
+  fi
+else
+  echo "未找到 ACR 凭证（.acr.env），若镜像仓库为公开仓库可忽略本提示"
+fi
+
 echo "==> docker compose pull ..."
 docker compose pull
 echo "==> docker compose up -d ..."
