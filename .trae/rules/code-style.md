@@ -115,6 +115,8 @@ app/
 - 每个模块包含：`types/xxx.ts`、`api/xxx.ts`、`views/模块/`，全局状态才进 `stores/`。
 - 按钮级权限用 `v-permission` 指令；字典类字段走 Pinia 缓存，避免重复请求。
 - 列表页统一结构：查询表单 + 分页表格 + 导出 Excel + 按钮权限。
+- 模板事件绑定中禁止使用 `void` 表达式（如 `@success="void fetchList"`）：会触发 vue-tsc 内部崩溃，导致 `type-check` 无法完成；直接写方法名 `@success="fetchList"`。
+- 组件 props 默认值为对象/数组时必须用工厂函数（`params: () => ({})`）；`v-model` 不得直接绑定只读 prop，需用 `computed` 代理并通过 `emit` 回写。
 
 ## 10. import 顺序
 
