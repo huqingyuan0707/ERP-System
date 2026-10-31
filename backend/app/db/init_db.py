@@ -117,6 +117,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     user_menu = next(menu for menu in menus if menu.perm_code == "sys:user:list")
     role_menu = next(menu for menu in menus if menu.perm_code == "sys:role:list")
     goods_menu = next(menu for menu in menus if menu.perm_code == "base:goods:list")
+    warehouse_menu = next(menu for menu in menus if menu.perm_code == "base:warehouse:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -134,6 +135,9 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("导入商品", "base:goods:import", goods_menu.id, 5),
         _button("商品分类管理", "base:category:list", goods_menu.id, 6),
         _button("计量单位管理", "base:unit:list", goods_menu.id, 7),
+        _button("新增仓库", "base:warehouse:add", warehouse_menu.id, 1),
+        _button("修改仓库", "base:warehouse:edit", warehouse_menu.id, 2),
+        _button("删除仓库", "base:warehouse:delete", warehouse_menu.id, 3),
         _button("查看操作日志", "sys:log:view", user_menu.id, 6),
         _button("查看异步任务", "sys:task:view", user_menu.id, 7),
         _button("超级权限", "*", dir_sys.id, 99),
