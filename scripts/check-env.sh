@@ -65,7 +65,11 @@ read_value() {
       gsub(/[ \t]/, "", name)
       if (name != k) next
       val = substr(line, idx + 1)
-      sub(/[ \t]+#.*$/, "", val)      # 去行内注释
+      # 行内注释仅对未加引号的值生效；含 # 的密钥请用引号包裹
+      q = substr(val, 1, 1)
+      if (q != "\"" && q != "\'") {
+        sub(/[ \t]+#.*$/, "", val)
+      }
       print val
       exit
     }' "$file" 2>/dev/null)"; then
@@ -76,10 +80,13 @@ read_value() {
   value="${value%$'\r'}"
   value="${value#"${value%%[![:space:]]*}"}"
   value="${value%"${value##*[![:space:]]}"}"
-  value="${value#\"}"
-  value="${value%\"}"
-  value="${value#\'}"
-  value="${value%\'}"
+  # 仅在首尾成对引号时剥离，避免误伤本身以引号结尾的合法值
+  if [ "${#value}" -ge 2 ]; then
+    case "$value" in
+      \"*\") value="${value:1:${#value}-2}" ;;
+      \'*\') value="${value:1:${#value}-2}" ;;
+    esac
+  fi
   printf '%s' "$value"
 }
 

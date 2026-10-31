@@ -381,17 +381,23 @@ jobs:
             repo_slug='${{ steps.deploykey.outputs.repo }}'
             if [ ! -d /root/erp ]; then
               if [ -n "$repo_token" ]; then
-                echo "服务器上不存在 /root/erp，正在用 DEPLOY_REPO_TOKEN 克隆仓库 ..."
-                git clone --depth 1 "https://x-access-token:${repo_token}@github.com/huqingyuan0707/ERP-System.git" /root/erp
+                echo "服务器上不存在 /root/erp，正在用 DEPLOY_REPO_TOKEN 克隆仓库 ${repo_slug} ..."
+                # token 不写进 URL 与命令行参数：写入 600 权限的临时凭据文件，克隆后立即删除
+                umask 077
+                cred_file="$(mktemp)"
+                printf 'https://x-access-token:%s@github.com\n' "$repo_token" > "$cred_file"
+                # 不使用 --depth 浅克隆：update.sh 需要 fetch + reset --hard 拉取远端最新提交
+                git -c "credential.helper=store --file=${cred_file}" clone "https://github.com/${repo_slug}.git" /root/erp
+                rm -f "$cred_file"
               else
                 echo "错误：服务器上不存在 /root/erp 目录。请先在服务器上把仓库克隆到该目录，或配置 Secret DEPLOY_REPO_TOKEN 让流水线自动克隆"
                 exit 1
               fi
             fi
             cd /root/erp
-            registry="$(printf '%s' '${{ env.acr_registry_b64 }}' | base64 -d | tr -d '[:space:]')"
-            username="$(printf '%s' '${{ env.acr_user_b64 }}' | base64 -d | tr -d '[:space:]')"
-            password="$(printf '%s' '${{ env.acr_pass_b64 }}' | base64 -d | tr -d '\r\n')"
+            registry="$(printf '%s' '${{ steps.enc.outputs.acr_registry_b64 }}' | base64 -d | tr -d '[:space:]')"
+            username="$(printf '%s' '${{ steps.enc.outputs.acr_user_b64 }}' | base64 -d | tr -d '[:space:]')"
+            password="$(printf '%s' '${{ steps.enc.outputs.acr_pass_b64 }}' | base64 -d | tr -d '\r\n')"
             echo "服务器端 ACR 配置：registry=${registry}, 用户名长度=${#username}, 密码长度=${#password}"
 
             # ACR_REGISTRY 非敏感：写进 .env，供 docker-compose 拼出镜像名
