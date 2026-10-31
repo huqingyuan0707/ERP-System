@@ -170,7 +170,8 @@ docker compose up -d --build
 | `scripts/gen-env-secrets.sh [env路径]` | 为 `.env` 生成 48 位强随机 `DB_PASSWORD`/`SECRET_KEY`/`MINIO_PASSWORD` |
 | `scripts/setup-https.sh <域名>` | certbot 申请 Let's Encrypt 证书并启用 HTTPS（需域名 A 记录指向本机、80 端口放通） |
 | `scripts/backup.sh [保留份数]` | 停止服务前自动备份 PostgreSQL 与 Redis 数据，可保留最近 N 份（默认 7） |
-| `scripts/check-acr.sh <registry> <用户名> <密码>` | ACR 自检：登录 → 校验命名空间 → 检查 `erp-backend`/`erp-frontend` 仓库是否存在 |
+| `scripts/check-acr.sh <registry> <用户名> <密码>` | ACR 自检：登录 → 校验命名空间 → 检查 `erpa-backend`/`erpa-frontend` 仓库是否存在 |
+| `scripts/check-env.sh` | 部署环境自检：`.env`/`.acr.env` 关键配置、ACR 登录与镜像可读性、容器状态、密钥文件权限 |
 
 ### 启用 HTTPS
 
@@ -196,7 +197,7 @@ bash scripts/setup-https.sh your.domain.com
 
 1. 开通**容器镜像服务 ACR**，记下**区域**（如 `cn-hangzhou`）与登录域名（`registry.cn-hangzhou.aliyuncs.com`）。
 2. 新建**命名空间**（如 `erp-prod`）。命名空间与区域一一对应，不能跨区域推送。
-3. 在命名空间下**手动创建两个镜像仓库**：`erp-backend`、`erp-frontend`。
+3. 在命名空间下**手动创建两个镜像仓库**：`erpa-backend`、`erpa-frontend`。
    ACR 不会在 `docker push` 时自动建仓库，仓库不存在时推送直接返回
    `denied: requested access to the resource is denied`。
 4. 在 ACR 实例的**访问凭证**里设置固定密码，记下用户名（通常是账号 ID）与密码；
@@ -206,7 +207,7 @@ bash scripts/setup-https.sh your.domain.com
 
 | Secret | 示例 | 说明 |
 |--------|------|------|
-| `ACR_REGISTRY` | `registry.cn-hangzhou.aliyuncs.com/erp-prod` | 镜像前缀（含命名空间）；也可改用 `ACR_HOST` + `ACR_NAMESPACE` 拆分填写 |
+| `ACR_REGISTRY` | `crpi-xxxx.cn-beijing.personal.cr.aliyuncs.com/erpa` | 镜像前缀（含命名空间）；个人版 ACR 形如 `crpi-xxx.cn-<区域>.personal.cr.aliyuncs.com/<命名空间>`；也可改用 `ACR_HOST` + `ACR_NAMESPACE` 拆分填写 |
 | `ACR_USERNAME` | `1234567890123456` | ACR 实例「访问凭证」的用户名，不是 RAM 用户名 |
 | `ACR_PASSWORD` | `********` | ACR 固定密码 / 临时令牌 |
 | `DEPLOY_HOST` | `1.2.3.4` | 服务器 IP 或域名 |
@@ -249,12 +250,16 @@ base64 -w0 ~/.ssh/erp_deploy
 本地可先跑一次自检脚本，避免反复消耗 CI 时间：
 
 ```bash
-bash scripts/check-acr.sh registry.cn-hangzhou.aliyuncs.com/erp-prod 1234567890 'your-password'
+# 1) 全量环境自检（配置 / ACR 登录 / 镜像可读性 / 容器状态 / 文件权限）
+bash scripts/check-env.sh
+
+# 2) 只查 ACR（需手动给出凭证）
+bash scripts/check-acr.sh crpi-xxxx.cn-beijing.personal.cr.aliyuncs.com/erpa 1234567890 'your-password'
 ```
 
 | 报错 | 原因 | 处理 |
 |------|------|------|
-| `denied: requested access to the resource is denied`（push） | 命名空间或镜像仓库不存在、区域不匹配、凭证无 push 权限 | 按「前置条件」1~4 逐项核对，重点确认 `erp-backend`/`erp-frontend` 已创建 |
+| `denied: requested access to the resource is denied`（push） | 命名空间或镜像仓库不存在、区域不匹配、凭证无 push 权限 | 按「前置条件」1~4 逐项核对，重点确认 `erpa-backend`/`erpa-frontend` 已创建 |
 | `unauthorized: incorrect username or password` | 用户名/密码填错 | 使用 ACR「访问凭证」的用户名与固定密码 |
 | `denied`（pull 阶段） | 服务器未登录 ACR | 确认 `.acr.env` 存在且 `scripts/update.sh` 已执行登录 |
 | `manifest unknown` | 仓库里还没有该 tag | 先成功 push，再拉取；或手动触发一次流水线 |

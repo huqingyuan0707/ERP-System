@@ -117,6 +117,10 @@ check_file() {
     fail "[为空] $file 中 $key 未配置"
     return 0
   fi
+  if [ "$value" = "change_me" ]; then
+    fail "[占位] $file 中 $key 仍是模板占位值，请执行 bash scripts/gen-env-secrets.sh .env 生成强随机密钥"
+    return 0
+  fi
   if [ -n "$validator" ] && ! "$validator" "$value"; then
     fail "[格式错误] $file 中 $key 的值格式不合法"
     return 0
