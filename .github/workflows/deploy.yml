@@ -28,6 +28,7 @@ jobs:
     outputs:
       host: ${{ steps.acr.outputs.host }}
       namespace: ${{ steps.push-backend.outputs.namespace }}
+      user: ${{ steps.acr.outputs.user }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v5
@@ -120,6 +121,7 @@ jobs:
 
           echo "host=${host}" >> "$GITHUB_OUTPUT"
           echo "candidates=${candidates}" >> "$GITHUB_OUTPUT"
+          echo "user=${user}" >> "$GITHUB_OUTPUT"
           {
             echo "### ACR 配置"
             echo "- Registry  : ${host}"
@@ -130,7 +132,7 @@ jobs:
       - name: 登录阿里云 ACR
         env:
           ACR_HOST: ${{ steps.acr.outputs.host }}
-          ACR_USER: ${{ secrets.ACR_USERNAME }}
+          ACR_USER: ${{ steps.acr.outputs.user }}
         run: |
           set -euo pipefail
           echo "$ACR_PASSWORD" | docker login "$ACR_HOST" --username "$ACR_USER" --password-stdin
@@ -181,10 +183,23 @@ jobs:
               echo "打标签失败，跳过该候选"
               continue
             fi
-            if docker push "${ref}"; then
-              ok="${ns}"
-              break
-            fi
+            for attempt in 1 2 3; do
+              push_out="$(docker push "${ref}" 2>&1)"
+              if [ $? -eq 0 ]; then
+                echo "$push_out" | tail -3
+                ok="${ns}"
+                break
+              fi
+              echo "推送失败（第 ${attempt} 次），原始报错："
+              echo "$push_out" | tail -10
+              if echo "$push_out" | grep -qiE 'toomanyrequests|429|rate limit'; then
+                echo "疑似限流，30 秒后重试 ..."
+                sleep 30
+              else
+                break
+              fi
+            done
+            [ -n "$ok" ] && break
             echo "命名空间 ${ns} 推送失败，尝试下一个候选"
           done
 
@@ -211,11 +226,15 @@ jobs:
           set -euo pipefail
           ref="${ACR_HOST}/${NAMESPACE}/erpa-frontend:${ACR_TAG}"
           docker tag "erp-frontend:${ACR_TAG}" "${ref}"
-          if ! docker push "${ref}"; then
+          push_out="$(docker push "${ref}" 2>&1)"
+          if [ $? -ne 0 ]; then
+            echo "推送失败，原始报错："
+            echo "$push_out" | tail -10
             echo "::error::推送失败：${ref}"
-            echo "排查方式与 backend 相同：命名空间 / 区域 / 仓库是否存在 / 推送权限"
+            echo "排查方式与 backend 相同：命名空间 / 区域 / 仓库是否存在 / 推送权限 / 镜像体积是否超限"
             exit 1
           fi
+          echo "$push_out" | tail -3
           echo "推送成功：${ref}"
 
   deploy:
@@ -232,7 +251,7 @@ jobs:
           } >> "$GITHUB_ENV"
         env:
           ACR_REGISTRY: ${{ needs.build-and-push.outputs.host }}/${{ needs.build-and-push.outputs.namespace }}
-          ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+          ACR_USERNAME: ${{ needs.build-and-push.outputs.user }}
           ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
 
       - name: SSH 登录服务器并拉取运行
