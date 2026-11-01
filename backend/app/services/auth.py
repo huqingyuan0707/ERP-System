@@ -201,6 +201,7 @@ class AuthService:
             id=user.id,
             username=user.username,
             real_name=user.real_name,
+            tenant_id=user.tenant_id,
             roles=roles,
             permissions=permissions,
             menus=menus,
@@ -262,7 +263,12 @@ class AuthService:
         access_token, expires_in = create_access_token(user.id, user.token_version)
         refresh_token, _ = create_refresh_token(user.id, user.token_version)
         return TokenPair(
-            token=TokenOut(access_token=access_token, token_type="bearer", expires_in=expires_in),
+            token=TokenOut(
+                access_token=access_token,
+                token_type="bearer",
+                expires_in=expires_in,
+                tenant_id=user.tenant_id,
+            ),
             refresh_token=refresh_token,
             refresh_max_age=settings.REFRESH_TOKEN_EXPIRE_MINUTES * 60,
         )

@@ -47,6 +47,7 @@ class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+    tenant_id: int | None = None
 
 
 class MenuOut(BaseModel):
@@ -70,6 +71,7 @@ class CurrentUserOut(BaseModel):
     id: int
     username: str
     real_name: str | None = None
+    tenant_id: int | None = None
     roles: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
     menus: list[MenuOut] = Field(default_factory=list)

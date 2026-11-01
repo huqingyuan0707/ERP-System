@@ -8,7 +8,7 @@ class Base(DeclarativeBase):
 
 
 # 导入全部模型，确保 Base.metadata 完整（供 Alembic autogenerate 与建表使用）
-from app.models import base_data, inventory, sys  # noqa: E402, F401
+from app.models import base_data, finance, idempotency, inventory, sys  # noqa: E402, F401
 
 
-__all__ = ["Base", "base_data", "sys"]
+__all__ = ["Base", "base_data", "finance", "idempotency", "inventory", "sys"]

@@ -9,13 +9,14 @@ from app.db.base import Base
 from app.models.mixins import (
     BIGINT_PK,
     SoftDeleteMixin,
+    TenantMixin,
     TimestampMixin,
     UserMixin,
     VersionMixin,
 )
 
 
-class InvStock(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
+class InvStock(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantMixin, Base):
     """库存表：inv_stock。
 
     同一商品在同一仓库只有一行，通过 qty / locked_qty / available_qty 三个字段
@@ -25,6 +26,9 @@ class InvStock(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
     __tablename__ = "inv_stock"
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BIGINT_PK, nullable=False, index=True, comment="租户 ID"
+    )
     warehouse_id: Mapped[int] = mapped_column(
         BIGINT_PK, ForeignKey("bd_warehouse.id"), nullable=False, index=True
     )
@@ -45,11 +49,12 @@ class InvStock(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
     )  # 移动加权平均成本
 
     __table_args__ = (
-        # 同一商品+仓库唯一（仅未删除行生效）
+        # 同一租户下同一商品+仓库唯一（仅未删除行生效）
         Index(
-            "uq_inv_stock_warehouse_goods",
+            "uq_inv_stock_warehouse_goods_tenant",
             "warehouse_id",
             "goods_id",
+            "tenant_id",
             unique=True,
             sqlite_where=text("is_deleted = 0"),
             postgresql_where=text("is_deleted = false"),
@@ -57,7 +62,7 @@ class InvStock(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
     )
 
 
-class InvStockFlow(TimestampMixin, Base):
+class InvStockFlow(TimestampMixin, TenantMixin, Base):
     """库存流水表：inv_stock_flow。
 
     每次库存变动写一条流水，记录变动前/后数量与单位成本，方便追溯与对账。
@@ -66,6 +71,9 @@ class InvStockFlow(TimestampMixin, Base):
     __tablename__ = "inv_stock_flow"
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[int] = mapped_column(
+        BIGINT_PK, nullable=False, index=True, comment="租户 ID"
+    )
     warehouse_id: Mapped[int] = mapped_column(
         BIGINT_PK, ForeignKey("bd_warehouse.id"), nullable=False, index=True
     )

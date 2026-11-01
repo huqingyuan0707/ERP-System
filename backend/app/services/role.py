@@ -12,9 +12,10 @@ from app.schemas.role import DataScopeAssign, RoleCreate, RoleUpdate
 class RoleService:
     """角色业务逻辑。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int) -> None:
         self._db = db
-        self._repo = RoleRepository(db)
+        self.tenant_id = tenant_id
+        self._repo = RoleRepository(db, tenant_id=tenant_id)  # 角色数据访问对象（已按租户隔离）
 
     async def list_roles(self) -> list[dict[str, object]]:
         """角色列表（附带已配置的数据权限部门）。"""

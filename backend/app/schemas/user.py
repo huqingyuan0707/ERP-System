@@ -19,9 +19,10 @@ Schema 是前后端的“合同”：
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from app.schemas.common import PageQuery, to_camel
+from app.utils.desensitize import mask_email, mask_mobile, mask_real_name
 
 
 class UserCreate(BaseModel):
@@ -97,6 +98,18 @@ class UserOut(BaseModel):
     last_login_at: datetime | None = None                    # 最后登录时间
     created_at: datetime | None = None                       # 创建时间
     updated_at: datetime | None = None                       # 最后修改时间
+
+    @field_serializer("real_name")
+    def _serialize_real_name(self, value: str | None) -> str | None:
+        return mask_real_name(value)
+
+    @field_serializer("mobile")
+    def _serialize_mobile(self, value: str | None) -> str | None:
+        return mask_mobile(value)
+
+    @field_serializer("email")
+    def _serialize_email(self, value: str | None) -> str | None:
+        return mask_email(value)
 
 
 class UserQuery(PageQuery):

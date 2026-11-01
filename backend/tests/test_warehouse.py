@@ -195,6 +195,7 @@ async def _scenario() -> None:
             async with AsyncSessionLocal() as session:
                 session.add(
                     InvStock(
+                        tenant_id=1,  # 测试环境默认租户 ID
                         warehouse_id=warehouse_c["id"],
                         goods_id=goods_id,
                         qty=10,

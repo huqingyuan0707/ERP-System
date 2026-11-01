@@ -16,12 +16,14 @@ declare module 'axios' {
 }
 
 const TOKEN_KEY = 'erp_access_token'
+const TENANT_KEY = 'erp_tenant_id'
 const LOGIN_URL = '/auth/login'
 const REFRESH_URL = '/auth/refresh'
 
 export const getToken = (): string => sessionStorage.getItem(TOKEN_KEY) ?? ''
 export const setToken = (token: string): void => sessionStorage.setItem(TOKEN_KEY, token)
 export const clearToken = (): void => sessionStorage.removeItem(TOKEN_KEY)
+export const getTenantId = (): string | null => sessionStorage.getItem(TENANT_KEY) ?? null
 
 const http: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL,
@@ -33,6 +35,10 @@ http.interceptors.request.use((config) => {
   const token = getToken()
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
+  }
+  const tenantId = getTenantId()
+  if (tenantId) {
+    config.headers['X-Tenant-Id'] = tenantId
   }
   return config
 })

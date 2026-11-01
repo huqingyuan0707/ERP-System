@@ -40,3 +40,15 @@ class VersionMixin:
     """乐观锁版本号。"""
 
     version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+
+
+class TenantMixin:
+    """多租户隔离字段 Mixin，所有多租户业务表建议继承。"""
+
+    tenant_id: Mapped[int] = mapped_column(
+        BIGINT_PK,
+        nullable=False,
+        index=True,
+        server_default="1",
+        comment="租户 ID",
+    )

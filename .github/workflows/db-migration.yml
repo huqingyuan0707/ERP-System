@@ -1,65 +1,58 @@
-name: DB Migration
+name: DB Migration Check
 
 on:
-  pull_request:
-    paths:
-      - 'backend/alembic/**'
-      - 'backend/app/models/**'
-      - 'backend/app/db/**'
-      - 'backend/requirements.txt'
   push:
     branches: [main]
-    paths:
-      - 'backend/alembic/**'
-      - 'backend/app/models/**'
-      - 'backend/app/db/**'
-  workflow_dispatch:
+  pull_request:
+    branches: [main]
 
 jobs:
-  migrate:
+  db-migration:
     runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_DB: erp
           POSTGRES_USER: erp
-          POSTGRES_PASSWORD: ci_test_pwd
-        ports:
-          - '5432:5432'
+          POSTGRES_PASSWORD: change_me
+          POSTGRES_DB: erp
+        ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U erp -d erp"
-          --health-interval 5s --health-timeout 5s --health-retries 10
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
     env:
-      DATABASE_URL: postgresql+asyncpg://erp:ci_test_pwd@localhost:5432/erp
-      SECRET_KEY: ci-only-secret-key-not-for-production
-    defaults:
-      run:
-        working-directory: backend
+      DATABASE_URL: postgresql+asyncpg://erp:change_me@localhost:5432/erp
+      TESTING: "0"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
+          python-version: "3.11"
+          cache: "pip"
 
-      - name: 安装依赖
-        run: pip install -r requirements.txt
-
-      - name: 应用迁移（alembic upgrade head）
-        run: alembic upgrade head
-
-      - name: 校验迁移可重复执行（幂等）
-        run: alembic upgrade head
-
-      - name: 检测模型与迁移是否脱节（alembic check）
-        # 暂不阻断：待历史迁移与模型完全对齐后再改为硬门禁
-        continue-on-error: true
+      - name: Install backend dependencies
+        working-directory: ./backend
         run: |
-          if alembic check; then
-            echo "模型与迁移一致 ✅"
-          else
-            echo "::warning::模型与迁移存在差异，请补一个 alembic revision 使二者一致"
-          fi
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wait for PostgreSQL ready
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -p 5432 -U erp -d erp && exit 0
+            sleep 2
+          done
+          echo "PostgreSQL 未就绪" >&2
+          exit 1
+
+      - name: Run alembic upgrade head
+        working-directory: ./backend
+        run: alembic upgrade head
+
+      - name: Run alembic check (模型与迁移文件一致性)
+        working-directory: ./backend
+        run: alembic check

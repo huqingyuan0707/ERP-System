@@ -17,13 +17,29 @@ class BaseRepository(Generic[ModelT]):
 
     model: ClassVar[type[ModelT]]
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int | None = None) -> None:
         self.db = db
+        self.tenant_id = tenant_id
+
+    def _apply_tenant_filter(self, stmt: Select) -> Select:
+        """对模型包含 tenant_id 字段的查询自动追加租户过滤条件。
+
+        当 tenant_id 为 None 时（如登录鉴权等系统级操作），不追加租户过滤，
+        允许跨租户查询；业务 Service 层应始终传入具体 tenant_id 做数据隔离。
+        """
+        if self.tenant_id is not None and hasattr(self.model, "tenant_id"):
+            stmt = stmt.where(self.model.tenant_id == self.tenant_id)  # type: ignore[attr-defined]
+        return stmt
 
     async def get(self, pk: int) -> ModelT | None:
-        return await self.db.get(self.model, pk)
+        stmt = select(self.model).where(self.model.id == pk)  # type: ignore[attr-defined]
+        stmt = self._apply_tenant_filter(stmt)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
 
     async def add(self, obj: ModelT) -> ModelT:
+        if self.tenant_id is not None and hasattr(obj, "tenant_id") and getattr(obj, "tenant_id") is None:
+            setattr(obj, "tenant_id", self.tenant_id)  # type: ignore[attr-defined]
         self.db.add(obj)
         await self.db.flush()
         await self.db.refresh(obj)
@@ -35,7 +51,8 @@ class BaseRepository(Generic[ModelT]):
     async def paginate(
         self, stmt: Select[tuple[ModelT]], page: int, page_size: int
     ) -> tuple[list[ModelT], int]:
-        """执行分页查询，返回 (当前页数据, 总数)。"""
+        """执行分页查询，返回 (当前页数据, 总数)。自动过滤非当前租户数据。"""
+        stmt = self._apply_tenant_filter(stmt)
         count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
         total = int((await self.db.execute(count_stmt)).scalar_one())
         rows_stmt = stmt.limit(page_size).offset(max(page - 1, 0) * page_size)

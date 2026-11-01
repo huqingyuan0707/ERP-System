@@ -9,6 +9,7 @@ export interface TokenResult {
   accessToken: string
   tokenType: string
   expiresIn: number
+  tenantId?: number
 }
 
 /** 动态菜单节点（/auth/me 返回，用于生成动态路由与侧边栏）。 */
@@ -31,6 +32,7 @@ export interface CurrentUser {
   id: number
   username: string
   realName: string | null
+  tenantId?: number
   roles: string[]
   permissions: string[]
   menus: MenuNode[]

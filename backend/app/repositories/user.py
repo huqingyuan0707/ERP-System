@@ -51,8 +51,11 @@ class UserRepository(BaseRepository[SysUser]):
           - None：未找到或已被软删除
         """
         stmt = select(SysUser).where(
-            SysUser.username == username, SysUser.is_deleted.is_(False)
+            SysUser.username == username,
+            SysUser.is_deleted.is_(False),
         )
+        if self.tenant_id is not None:
+            stmt = stmt.where(SysUser.tenant_id == self.tenant_id)  # 租户隔离：只查当前租户用户
         # scalar_one_or_none()：返回 0 或 1 条结果，多于 1 条会报错
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
@@ -78,6 +81,8 @@ class UserRepository(BaseRepository[SysUser]):
           6. 分页：调用父类 paginate 方法，自动算出总数并切分当前页数据
         """
         stmt = select(SysUser).where(SysUser.is_deleted.is_(False))
+        if self.tenant_id is not None:
+            stmt = stmt.where(SysUser.tenant_id == self.tenant_id)  # 租户隔离：只查当前租户用户
 
         if query.keyword:
             like = f"%{query.keyword}%"

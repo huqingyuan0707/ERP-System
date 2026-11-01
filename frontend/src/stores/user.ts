@@ -8,6 +8,7 @@ import { clearToken, getToken, setToken } from '@/utils/request'
 import type { CurrentUser, LoginPayload, MenuNode } from '@/types/auth'
 
 const USER_KEY = 'erp_user'
+const TENANT_KEY = 'erp_tenant_id'
 
 /** 从 sessionStorage 恢复用户信息，避免刷新页面白屏重取；损坏数据静默忽略。 */
 const loadStoredUser = (): CurrentUser | null => {
@@ -19,10 +20,22 @@ const loadStoredUser = (): CurrentUser | null => {
   }
 }
 
+/** 从 sessionStorage 恢复租户 ID。 */
+const loadStoredTenantId = (): number | null => {
+  try {
+    const raw = sessionStorage.getItem(TENANT_KEY)
+    return raw ? parseInt(raw, 10) : null
+  } catch {
+    return null
+  }
+}
+
 export const useUserStore = defineStore('user', () => {
   const storedUser = loadStoredUser()
+  const storedTenantId = loadStoredTenantId()
   const token = ref<string>(getToken())
   const user = ref<CurrentUser | null>(storedUser)
+  const tenantId = ref<number | null>(storedTenantId ?? storedUser?.tenantId ?? null)
   const permissions = ref<string[]>(storedUser?.permissions ?? [])
   const roles = ref<string[]>(storedUser?.roles ?? [])
   const menus = ref<MenuNode[]>(storedUser?.menus ?? [])
@@ -35,6 +48,14 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
+  const persistTenantId = (value: number | null): void => {
+    if (value) {
+      sessionStorage.setItem(TENANT_KEY, String(value))
+    } else {
+      sessionStorage.removeItem(TENANT_KEY)
+    }
+  }
+
   const hasPerm = (code: string): boolean =>
     permissions.value.includes('*') || permissions.value.includes(code)
 
@@ -42,11 +63,17 @@ export const useUserStore = defineStore('user', () => {
     const result = await loginApi(payload)
     token.value = result.accessToken
     setToken(result.accessToken)
+    if (result.tenantId) {
+      tenantId.value = result.tenantId
+      persistTenantId(result.tenantId)
+    }
   }
 
   const fetchUser = async (): Promise<CurrentUser> => {
     const me = await getCurrentUser()
     user.value = me
+    tenantId.value = me.tenantId ?? null
+    persistTenantId(tenantId.value)
     permissions.value = me.permissions
     roles.value = me.roles
     menus.value = me.menus
@@ -63,12 +90,14 @@ export const useUserStore = defineStore('user', () => {
     }
     token.value = ''
     user.value = null
+    tenantId.value = null
     permissions.value = []
     roles.value = []
     menus.value = []
     clearToken()
     persistUser()
+    persistTenantId(null)
   }
 
-  return { token, user, permissions, roles, menus, hasPerm, login, fetchUser, logout }
+  return { token, user, tenantId, permissions, roles, menus, hasPerm, login, fetchUser, logout }
 })

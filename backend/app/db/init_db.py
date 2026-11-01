@@ -10,6 +10,7 @@ schema 策略（与 alembic 配合，结构变更一律走迁移）：
 import logging
 from pathlib import Path
 
+from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
@@ -69,6 +70,32 @@ def _current_revision(connection) -> str | None:
     return rows[0] if rows else None
 
 
+def _upgrade_to_head(connection) -> bool:
+    """在已建表的库上执行 alembic 迁移，把版本推进到 head。
+
+    背景：新库的建表走 Base.metadata.create_all，而各迁移文件里除了建表，
+    还包含**种子数据**（字典类型/字典项、系统参数、单号规则等）的 INSERT。
+    只 create_all + stamp 会跳过这些 INSERT，导致新库缺少字典与参数，
+    字典页、单号规则接口直接 404。
+
+    这里让迁移真正跑一遍：迁移脚本里的建表操作都做了「表已存在则跳过」的
+    幂等处理，因此可以安全地在 create_all 之后执行。
+
+    返回是否成功推进到 head；失败不抛异常，仅告警，避免阻断服务启动。
+    """
+    script = _alembic_script()
+    if script is None:
+        return False
+    try:
+        cfg = Config(str(ALEMBIC_INI))
+        cfg.attributes["connection"] = connection
+        command.upgrade(cfg, "head")
+    except Exception:  # noqa: BLE001  迁移失败不应阻断服务启动
+        logger.warning("执行 alembic upgrade head 失败", exc_info=True)
+        return False
+    return True
+
+
 def _stamp_head(connection) -> None:
     """新库建表后打基线：把版本标记为当前 head，后续变更走迁移。"""
     script = _alembic_script()
@@ -83,24 +110,43 @@ def _stamp_head(connection) -> None:
 
 
 async def init_db() -> None:
-    """建表并写入种子数据。"""
+    """建表并写入种子数据。
+
+    库表结构策略（与 alembic 配合，结构变更一律走迁移）：
+    - 新库（无 alembic_version 表）：create_all 建表后 stamp 到当前 head，
+      之后的结构变更由 `alembic upgrade head` 负责；
+    - 已有库（有 alembic_version）：不再 create_all 改结构，仅将版本标记为
+      当前 head，结构变更由 CI/部署脚本中的 `alembic upgrade head` 负责。
+    """
     async with engine.begin() as conn:
         revision = await conn.run_sync(_current_revision)
         if revision is None:
-            # 全新库：建表 + 打基线
+            # 全新库：先 create_all 建表，再执行迁移以补齐种子数据
+            # （迁移里含字典/参数/单号规则的 INSERT，只 create_all 会漏掉）
             await conn.run_sync(Base.metadata.create_all)
-            await conn.run_sync(_stamp_head)
+            upgraded = await conn.run_sync(_upgrade_to_head)
+            if upgraded:
+                logger.info("新库已建表并执行迁移到 alembic head")
+            else:
+                # 迁移不可用时退化为仅打基线，保证服务仍能启动
+                await conn.run_sync(_stamp_head)
+                logger.info("新库已建表并 stamp 到 alembic head（迁移未执行）")
         else:
-            # 已纳管的库：只补建缺失的表，不改动已有表结构
-            await conn.run_sync(Base.metadata.create_all)
+            # 已纳管的库：不再 create_all 改结构，仅 stamp 到 head
             head = _alembic_head()
-            if head and revision != head:
-                logger.warning(
-                    "数据库迁移版本为 %s，代码 head 为 %s；"
-                    "请执行 `alembic upgrade head` 应用结构变更",
-                    revision,
-                    head,
-                )
+            if head:
+                if revision != head:
+                    logger.warning(
+                        "数据库迁移版本 %s 落后于代码 head %s；"
+                        "init_db 不再自动改结构，请确保已通过 `alembic upgrade head` "
+                        "应用结构变更；此处仅将版本标记为 head",
+                        revision,
+                        head,
+                    )
+                await conn.run_sync(_stamp_head)
+                logger.info("已将数据库版本标记为 alembic head: %s", head)
+            else:
+                logger.warning("无法读取 alembic head，跳过 stamp")
     async with AsyncSessionLocal() as session:
         await _seed(session)
 

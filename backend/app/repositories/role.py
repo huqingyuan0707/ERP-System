@@ -9,24 +9,36 @@ from app.models.sys import SysRole, SysRoleDept, SysRolePermission, SysUserRole
 class RoleRepository:
     """角色数据访问（不含业务规则）。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int | None = None) -> None:
         self._db = db
+        self.tenant_id = tenant_id
 
     async def list_all(self) -> list[SysRole]:
         """全部未删除角色，按 id 排序。"""
-        stmt = select(SysRole).where(SysRole.is_deleted.is_(False)).order_by(SysRole.id)
+        stmt = select(SysRole).where(
+            SysRole.is_deleted.is_(False),
+            SysRole.tenant_id == self.tenant_id,  # 租户隔离：只查当前租户角色
+        ).order_by(SysRole.id)
         return list((await self._db.execute(stmt)).scalars().all())
 
     async def get_by_id(self, role_id: int) -> SysRole | None:
         """按 id 查询角色（未删除）。"""
         return await self._db.scalar(
-            select(SysRole).where(SysRole.id == role_id, SysRole.is_deleted.is_(False))
+            select(SysRole).where(
+                SysRole.id == role_id,
+                SysRole.is_deleted.is_(False),
+                SysRole.tenant_id == self.tenant_id,  # 租户隔离
+            )
         )
 
     async def get_by_code(self, code: str) -> SysRole | None:
         """按 code 查询角色（未删除）。"""
         return await self._db.scalar(
-            select(SysRole).where(SysRole.code == code, SysRole.is_deleted.is_(False))
+            select(SysRole).where(
+                SysRole.code == code,
+                SysRole.is_deleted.is_(False),
+                SysRole.tenant_id == self.tenant_id,  # 租户隔离
+            )
         )
 
     async def count_user_roles(self, role_id: int) -> int:

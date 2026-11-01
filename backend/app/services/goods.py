@@ -49,11 +49,12 @@ def _to_goods_out(
 class GoodsService:
     """商品 CRUD 与自动编码。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int) -> None:
         self.db = db
-        self.goods = GoodsRepository(db)
-        self.categories = GoodsCategoryRepository(db)
-        self.units = UnitRepository(db)
+        self.tenant_id = tenant_id
+        self.goods = GoodsRepository(db, tenant_id=tenant_id)
+        self.categories = GoodsCategoryRepository(db, tenant_id=tenant_id)
+        self.units = UnitRepository(db, tenant_id=tenant_id)
 
     async def list_goods(self, query: GoodsQuery) -> PageResult[GoodsOut]:
         rows, total = await self.goods.list_goods(query)
@@ -71,6 +72,7 @@ class GoodsService:
         await self._validate_unique(code=code, barcode=payload.barcode)
         self._validate_stock_range(payload.stock_lower, payload.stock_upper)
         goods = BdGoods(
+            tenant_id=self.tenant_id,
             code=code,
             name=payload.name.strip(),
             category_id=payload.category_id,
@@ -176,9 +178,10 @@ class GoodsService:
 class GoodsCategoryService:
     """商品分类 CRUD（删除前校验子分类与商品引用）。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int) -> None:
         self.db = db
-        self.categories = GoodsCategoryRepository(db)
+        self.tenant_id = tenant_id
+        self.categories = GoodsCategoryRepository(db, tenant_id=tenant_id)
 
     async def list_categories(self, query: GoodsCategoryQuery) -> list[GoodsCategoryOut]:
         """返回全部分类并附带子分类/商品引用计数，前端据此构建树并禁用删除。"""
@@ -211,6 +214,7 @@ class GoodsCategoryService:
         if payload.parent_id is not None:
             await self._ensure_parent(payload.parent_id, None)
         category = BdGoodsCategory(
+            tenant_id=self.tenant_id,
             name=name,
             parent_id=payload.parent_id,
             sort=payload.sort,
@@ -285,9 +289,10 @@ class GoodsCategoryService:
 class UnitService:
     """计量单位 CRUD（删除前校验商品引用）。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int) -> None:
         self.db = db
-        self.units = UnitRepository(db)
+        self.tenant_id = tenant_id
+        self.units = UnitRepository(db, tenant_id=tenant_id)
 
     async def list_units(self, query: UnitQuery) -> list[UnitOut]:
         """返回全部单位并附带商品引用数量，前端据此禁用删除按钮。"""
@@ -310,7 +315,12 @@ class UnitService:
         name = payload.name.strip()
         if await self.units.get_by_name(name):
             raise AppException(ErrorCode.CONFLICT, "单位名称已存在")
-        unit = BdUnit(name=name, precision=payload.precision, remark=payload.remark)
+        unit = BdUnit(
+            tenant_id=self.tenant_id,
+            name=name,
+            precision=payload.precision,
+            remark=payload.remark,
+        )
         await self.units.add(unit)
         await self.db.commit()
         return UnitOut.model_validate(unit)

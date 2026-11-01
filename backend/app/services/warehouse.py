@@ -32,10 +32,11 @@ OPER_MODULE = "基础资料"  # sys_oper_log 中记录本业务所属模块。
 class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用。
     """提供仓库查询和写操作；默认仓禁止直接取消、停用或删除，须先切换到其他仓。"""
 
-    def __init__(self, db: AsyncSession) -> None:  # 接收请求级会话，不创建额外事务。
+    def __init__(self, db: AsyncSession, tenant_id: int) -> None:  # 接收请求级会话与租户 ID，不创建额外事务。
         """用 db 初始化全部仓储；它们共享同一事务，无返回值。"""
         self.db = db  # 提交和回滚统一由本 Service 控制。
-        self.warehouses = WarehouseRepository(db)  # 访问仓库及关联库存。
+        self.tenant_id = tenant_id  # 当前租户 ID，用于多租户数据隔离。
+        self.warehouses = WarehouseRepository(db, tenant_id=tenant_id)  # 访问仓库及关联库存，自动按租户过滤。
         self.users = UserRepository(db)  # 检查负责人档案。
         self.oper_logs = OperLogRepository(db)  # 写入与仓库变更绑定的审计记录。
 
@@ -96,6 +97,7 @@ class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用�
                     current_user_id  # 同时写入旧默认仓的更新人。
                 )  # 这里只更新未提交，后续失败时会一起恢复。
             warehouse = BdWarehouse(  # 经过校验后构造仓库模型。
+                tenant_id=self.tenant_id,  # 多租户隔离：当前租户 ID。
                 code=code,  # 已完成去空白或自动生成及唯一性检查。
                 name=name,  # 保存清理后的必填名称。
                 manager_id=payload.manager_id,  # 可空的负责人外键。

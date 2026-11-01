@@ -56,7 +56,7 @@ async def _login_token(client: httpx.AsyncClient, username: str, password: str) 
 
 async def _create_dept(name: str) -> int:
     async with AsyncSessionLocal() as session:
-        dept = SysDept(name=name, sort=99, status=1)
+        dept = SysDept(name=name, sort=99, status=1, tenant_id=1)
         session.add(dept)
         await session.commit()
         return int(dept.id)
@@ -64,7 +64,7 @@ async def _create_dept(name: str) -> int:
 
 async def _create_role(code: str) -> int:
     async with AsyncSessionLocal() as session:
-        role = SysRole(code=code, name="用户管理测试角色", data_scope=1, status=1)
+        role = SysRole(code=code, name="用户管理测试角色", data_scope=1, status=1, tenant_id=1)
         session.add(role)
         await session.commit()
         return int(role.id)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# 服务器端的幂等更新脚本：拉取最新代码 -> 重建启动 -> 健康检查。
+# 服务器端的幂等更新脚本：拉取最新代码 -> 迁移前备份 -> 数据库迁移 -> 重建启动 -> 健康检查。
 # 既可由 CI 通过 SSH 调用，也可手动在服务器执行：bash scripts/update.sh
 #
 set -euo pipefail
@@ -13,9 +13,6 @@ cd "$PROJECT_DIR"
 echo "==> 更新目录：$PROJECT_DIR"
 
 # 1) 同步最新代码
-#    用 fetch + reset --hard：仓库以远端为准，避免服务器上手工改动过的文件
-#    导致 git pull 报 "Your local changes would be overwritten"；
-#    被 .gitignore 忽略的文件（.env / .acr.env）不受影响，会原样保留。
 if [ -d .git ]; then
   echo "==> git fetch + reset --hard origin/main ..."
   git fetch origin main
@@ -30,7 +27,6 @@ if [ -f scripts/gen-env-secrets.sh ]; then
 fi
 
 # 3) 拉取最新镜像并启动（镜像由 CI 构建推送到 ACR，服务器只拉取运行）
-#    私有仓库必须先 docker login，否则 docker compose pull 会报 denied
 read_env_value() {
   local key="$1" file="$2" value=""
   if [ -f "$file" ]; then
@@ -58,7 +54,7 @@ fi
 echo "==> docker compose pull ..."
 docker compose pull
 
-# 迁移前自动备份：迁移失败时据此回滚数据库
+# 4) 迁移前自动备份：迁移失败时据此回滚数据库
 echo "==> 迁移前备份数据库 ..."
 BACKUP_DIR=""
 if [ -f scripts/backup.sh ]; then
@@ -70,7 +66,7 @@ if [ -f scripts/backup.sh ]; then
   fi
 fi
 
-# 迁移：结构变更以 alembic 为准（init_db 的 create_all 只补建缺失表，不会改已有表）
+# 5) 执行数据库迁移（结构变更以 alembic 为准；init_db 的 create_all 只补建缺失表，不会改已有表）
 echo "==> 执行数据库迁移 (alembic upgrade head) ..."
 if ! docker compose run --rm backend alembic upgrade head; then
   echo "!!! 数据库迁移失败，正在回滚 ..." >&2
@@ -91,7 +87,7 @@ fi
 echo "==> docker compose up -d ..."
 docker compose up -d
 
-# 4) 健康检查（最多等 2 分钟）
+# 6) 健康检查（最多等 2 分钟）
 echo "==> 等待后端就绪 ..."
 for i in $(seq 1 40); do
   if curl -fsS http://localhost/api/v1/health >/dev/null 2>&1; then

@@ -1,0 +1,38 @@
+# pyink 格式化配置（Google Python Style Guide 对齐）
+#
+# 【重要】pyink 只会读取本文件 [tool.pyink] 段内的键；
+#          若写成顶层裸键（line-length = 88）会被静默忽略，不报错但也不生效。
+#          因此本文件必须保留 [tool.pyink] 段头。
+#
+# 用法：pyink --config backend/pyink.toml --check backend/app
+#      pyink --config backend/pyink.toml backend/app          # 直接改写文件
+
+[tool.pyink]
+# 行宽上限：与仓库现有 ruff/black 的 line-length=100 保持一致，
+# 避免同一次提交里出现「pyink 与 ruff 互相打架」的二次格式化。
+line-length = 100
+
+# 缩进空格数：Google Python Style Guide 规定 Python 代码使用 4 空格缩进。
+# （pyink 提供的 2 空格选项是给 Google 内部 JS 风格用的，Python 场景不要用。）
+pyink-indentation = 4
+
+# 目标 Python 版本：与 pyproject.toml 的 target-version="py311" 保持一致。
+target-version = ["py311"]
+
+# 引号风格：使用「文件内多数派引号」，而不是强制双引号。
+# 原因：本仓库存量代码中单引号与双引号混用，若强制双引号会产生大面积无意义 diff，
+# 淹没真正的业务改动。Google 风格建议双引号，但对存量 ERP 代码，稳定性优先。
+pyink-use-majority-quotes = true
+
+# 自动修复阶段跳过的文件：这些文件不做格式化处理
+extend-exclude = '''
+(
+  /(\.venv|venv|node_modules|migrations|alembic)/|
+  ^/backend/reports/|
+  __pycache__
+)
+'''
+
+# 预览特性：暂不开启。Google 风格的部分细节仍在演进，
+# 开启后每次 pyink 升级都可能带来全量重排，ERP 团队难以承受。
+preview = false

@@ -47,7 +47,7 @@ def _suffix() -> str:
 
 async def _create_dept(name: str, parent_id: int | None) -> int:
     async with AsyncSessionLocal() as session:
-        dept = SysDept(name=name, parent_id=parent_id, sort=99, status=1)
+        dept = SysDept(name=name, parent_id=parent_id, sort=99, status=1, tenant_id=1)
         session.add(dept)
         await session.commit()
         return int(dept.id)
@@ -61,6 +61,7 @@ async def _create_user(username: str, dept_id: int | None, role_ids: list[int]) 
             real_name="数据范围测试",
             dept_id=dept_id,
             status=1,
+            tenant_id=1,
         )
         session.add(user)
         await session.flush()
@@ -72,7 +73,7 @@ async def _create_user(username: str, dept_id: int | None, role_ids: list[int]) 
 
 async def _create_role(code: str, data_scope: int) -> int:
     async with AsyncSessionLocal() as session:
-        role = SysRole(code=code, name=f"范围角色{code}", data_scope=data_scope, status=1)
+        role = SysRole(code=code, name=f"范围角色{code}", data_scope=data_scope, status=1, tenant_id=1)
         session.add(role)
         await session.commit()
         return int(role.id)
@@ -86,6 +87,7 @@ async def _create_goods(name: str, created_by: int) -> int:
             cost_price=1,
             sale_price=2,
             status=1,
+            tenant_id=1,  # 测试环境默认租户 ID
         )
         session.add(goods)
         await session.flush()

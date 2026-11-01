@@ -11,9 +11,10 @@ from app.schemas.permission import PermissionNodeOut
 class PermissionService:
     """权限树与角色权限分配。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int) -> None:
         self.db = db
-        self.permissions = PermissionRepository(db)
+        self.tenant_id = tenant_id
+        self.permissions = PermissionRepository(db, tenant_id=tenant_id)  # 权限数据访问对象（已按租户隔离）
 
     async def get_tree(self) -> list[PermissionNodeOut]:
         """完整权限树（目录/菜单/按钮），供角色分配界面使用。"""

@@ -30,6 +30,7 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
         stmt = (  # 修改前重新取值，避免同一会话中的旧对象影响默认仓和删除状态判断。
             select(BdWarehouse)  # 返回完整仓库对象，供 Service 判断并修改。
             .where(BdWarehouse.id == warehouse_id)  # 只锁定本次操作的目标仓库。
+            .where(BdWarehouse.tenant_id == self.tenant_id)  # 租户隔离：只锁定当前租户数据。
             .with_for_update()  # PostgreSQL 行锁随业务事务一起释放。
             .execution_options(populate_existing=True)  # 覆盖会话中可能缓存的旧字段值。
         )  # 业务层仍需判断记录是否已经软删除。
@@ -37,7 +38,10 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
 
     async def max_code(self, prefix: str) -> str | None:  # 为统一编码工具查询最大的已用序号。
         """返回 prefix 下数字序号最大的编码或 None；含软删除记录，忽略非数字自定义编码。"""
-        stmt = select(BdWarehouse.code).where(BdWarehouse.code.like(f"{prefix}%"))  # 先筛前缀。
+        stmt = select(BdWarehouse.code).where(  # 先筛前缀，再筛当前租户。
+            BdWarehouse.code.like(f"{prefix}%"),  # 编码前缀匹配。
+            BdWarehouse.tenant_id == self.tenant_id,  # 租户隔离，避免跨租户取号冲突。
+        )
         codes = (await self.db.execute(stmt)).scalars().all()  # 已删除仓的编码也不能重复使用。
         numeric_codes = [  # 只让标准数字后缀参与自动取号，不受 WH-MAIN 等自定义编码影响。
             code  # 保留完整编码，交给统一工具解析下一个序号。
@@ -61,7 +65,10 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
         编码使用全表唯一索引，因此软删除记录也参与查重，避免入库时才报冲突。
         本方法只返回仓库或 None，是否允许保存由 Service 判断。
         """
-        stmt = select(BdWarehouse).where(BdWarehouse.code == code)  # 包含软删除记录。
+        stmt = select(BdWarehouse).where(  # 包含软删除记录，并按租户隔离。
+            BdWarehouse.code == code,
+            BdWarehouse.tenant_id == self.tenant_id,  # 租户隔离，避免跨租户编码冲突。
+        )
         if exclude_id is not None:  # 没传排除 ID 时，检查全部记录。
             stmt = stmt.where(BdWarehouse.id != exclude_id)  # 避免把自己当作重复记录。
         return (await self.db.execute(stmt)).scalar_one_or_none()  # 返回 ORM 对象而非 Row。
@@ -71,7 +78,10 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
         query: WarehouseQuery,  # 接收已通过 Schema 校验的查询参数。
     ) -> Select[tuple[BdWarehouse]]:  # 查询每行只包含一个仓库 ORM 对象。
         """根据 keyword、status 构造未删除仓库查询；返回 SQL，交给父类分页执行。"""
-        stmt = select(BdWarehouse).where(BdWarehouse.is_deleted.is_(False))  # 排除软删除。
+        stmt = select(BdWarehouse).where(  # 排除软删除，并按租户隔离。
+            BdWarehouse.is_deleted.is_(False),
+            BdWarehouse.tenant_id == self.tenant_id,  # 租户隔离，只查当前租户仓库。
+        )
         if query.keyword:  # 未提供关键字或为空字符串时，不追加模糊查询。
             like = f"%{query.keyword}%"  # 百分号表示任意字符，由 ORM 绑定参数。
             stmt = stmt.where(  # 追加关键字条件，与其他筛选条件同时满足。
@@ -93,9 +103,10 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
         多条符合条件的记录会触发查询异常，不静默挑选其中一条。
         默认仓切换与并发控制由 Service 负责，此处仅查询。
         """
-        stmt = select(BdWarehouse).where(  # 同时满足以下默认仓条件。
+        stmt = select(BdWarehouse).where(  # 同时满足以下默认仓条件，并按租户隔离。
             BdWarehouse.is_deleted.is_(False),  # 已删除仓库不再作为当前默认仓。
             BdWarehouse.is_default.is_(True),  # 要求默认仓标记为 True。
+            BdWarehouse.tenant_id == self.tenant_id,  # 租户隔离，只查当前租户默认仓。
         )  # where 中的多个条件默认按 AND 组合。
         if exclude_id is not None:  # 仅指定 ID 时排除当前仓库。
             stmt = stmt.where(BdWarehouse.id != exclude_id)  # 查询其他默认仓。
@@ -110,9 +121,10 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
 
         UPDATE 在当前事务内执行，不提交；若后续新增、修改或日志失败，Service 可整体回滚。
         """
-        stmt = update(BdWarehouse).where(  # 只更新当前真正作为默认仓的记录。
+        stmt = update(BdWarehouse).where(  # 只更新当前真正作为默认仓的记录，并按租户隔离。
             BdWarehouse.is_deleted.is_(False),  # 不改动已经软删除的历史档案。
             BdWarehouse.is_default.is_(True),  # 非默认仓无需重复更新审计字段。
+            BdWarehouse.tenant_id == self.tenant_id,  # 租户隔离，只取消当前租户默认仓。
         )  # 一次更新全部旧默认，避免遗漏不一致的历史默认标记。
         if exclude_id is not None:  # 修改现有仓库时，目标仓由 Service 自己更新。
             stmt = stmt.where(BdWarehouse.id != exclude_id)  # 不取消目标仓已有的默认标记。
@@ -142,8 +154,9 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
         按行检查可防止正负库存相抵；负数或锁定库存也不能被当作空仓。
         全零记录不视为仍有库存；停用、删除限制与未结单据校验由 Service 处理。
         """
-        stock_query = select(InvStock.id).where(  # 只描述需要检查的库存记录。
+        stock_query = select(InvStock.id).where(  # 只描述需要检查的库存记录，并按租户隔离。
             InvStock.warehouse_id == warehouse_id,  # 只检查指定仓库。
+            InvStock.tenant_id == self.tenant_id,  # 租户隔离，只检查当前租户库存。
             InvStock.is_deleted.is_(False),  # 已软删除的库存记录不参与判断。
             or_(  # 账面或锁定数量任一非零，就说明不能当作空仓。
                 InvStock.qty != 0,  # 账面数量含负数，避免漏检负库存。

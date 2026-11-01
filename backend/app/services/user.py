@@ -37,10 +37,11 @@ OPER_MODULE = "系统管理"
 class UserService:
     """用户 CRUD 与密码重置业务。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, tenant_id: int) -> None:
         self.db = db
-        self.users = UserRepository(db)        # 用户数据访问对象
-        self.oper_logs = OperLogRepository(db) # 操作日志数据访问对象
+        self.tenant_id = tenant_id
+        self.users = UserRepository(db, tenant_id=tenant_id)  # 用户数据访问对象（已按租户隔离）
+        self.oper_logs = OperLogRepository(db)                # 操作日志数据访问对象
 
     # ------------------------------------------------------------------
     # 查询类

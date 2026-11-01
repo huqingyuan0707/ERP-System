@@ -39,6 +39,7 @@ from app.db.base import Base  # 所有模型的基类，继承后才会被注册
 from app.models.mixins import (
     BIGINT_PK,  # 跨库主键类型：PostgreSQL 用 BIGINT，SQLite 退化为 INTEGER
     SoftDeleteMixin,  # 公共列：is_deleted（逻辑删除标记）
+    TenantMixin,  # 公共列：tenant_id（多租户隔离）
     TimestampMixin,  # 公共列：created_at / updated_at（自动记录时间）
     UserMixin,  # 公共列：created_by / updated_by（记录操作人）
     VersionMixin,  # 公共列：version（乐观锁版本号）
@@ -46,7 +47,7 @@ from app.models.mixins import (
 
 
 # 部门表：sys_dept，通过 parent_id 自关联支持多级部门树
-class SysDept(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
+class SysDept(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantMixin, Base):
     """部门表：sys_dept。
 
     字段含义：
@@ -63,6 +64,10 @@ class SysDept(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
 
     # 类与数据库表名绑定，SQLAlchemy 据此知道读写哪张表
     __tablename__ = "sys_dept"
+    __table_args__ = (
+        # 同一租户下部门名称唯一
+        Index("uq_dept_name_tenant", "name", "tenant_id", unique=True),
+    )
 
     # 主键：自增，插入时由数据库生成 ID
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
@@ -76,14 +81,14 @@ class SysDept(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
 
 
 # 用户表：sys_user，系统登录与权限体系的核心表
-class SysUser(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
+class SysUser(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantMixin, Base):
     """用户表：sys_user。
 
     这是系统管理模块最核心的表，存储每个登录用户的基本信息。
 
     字段含义：
       - id：用户主键
-      - username：登录账号，唯一，建有索引，支持快速按用户名查询（登录时用）
+      - username：登录账号，在同一租户下唯一，建有索引，支持快速按用户名查询（登录时用）
       - password_hash：密码哈希值，bcrypt 加密后存储，明文不进数据库
       - real_name：真实姓名，可选
       - mobile：手机号，可选
@@ -104,12 +109,16 @@ class SysUser(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
 
     # 映射到表 sys_user
     __tablename__ = "sys_user"
+    __table_args__ = (
+        # 同一租户下用户名唯一
+        Index("uq_user_username_tenant", "username", "tenant_id", unique=True),
+    )
 
     # 主键：自增，插入时由数据库生成 ID
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
-    # 登录账号：唯一索引，登录与新增查重都按它查询；唯一约束也是数据库层的最终防重
+    # 登录账号：在同一租户下唯一，登录与新增查重都按它查询；唯一约束也是数据库层的最终防重
     username: Mapped[str] = mapped_column(
-        String(64), unique=True, index=True, nullable=False
+        String(64), index=True, nullable=False
     )
     password_hash: Mapped[str] = mapped_column(
         String(255), nullable=False
@@ -131,14 +140,14 @@ class SysUser(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
 
 
 # 角色表：sys_role，用于权限分组（一个用户可挂多个角色）
-class SysRole(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
+class SysRole(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantMixin, Base):
     """角色表：sys_role。
 
     角色用于权限分组，一个用户可以有多个角色。
 
     字段含义：
       - id：角色主键
-      - code：角色编码，唯一，如 "admin"、"viewer"、"manager"，用于代码中判断权限
+      - code：角色编码，在同一租户下唯一，如 "admin"、"viewer"、"manager"，用于代码中判断权限
       - name：角色名称，如 "超级管理员"、"只读用户"
       - data_scope：数据范围，1=本人，2=本部门（含下级），3=全部
       - status：状态，1=启用，0=禁用
@@ -152,11 +161,15 @@ class SysRole(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Base):
 
     # 映射到表 sys_role
     __tablename__ = "sys_role"
+    __table_args__ = (
+        # 同一租户下角色编码唯一
+        Index("uq_role_code_tenant", "code", "tenant_id", unique=True),
+    )
 
     # 主键：自增，插入时由数据库生成 ID
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
-    # 角色编码：唯一且建索引，代码里用 code 判断角色（如 admin）
-    code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    # 角色编码：在同一租户下唯一且建索引，代码里用 code 判断角色（如 admin）
+    code: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(64), nullable=False)  # 角色中文名，必填
     # 数据范围：1=本人，2=本部门（含下级），3=全部
     data_scope: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

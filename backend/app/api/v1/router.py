@@ -10,6 +10,7 @@ from app.api.v1.endpoints import (
     dicts,
     export,
     goods,
+    inventory,
     log,
     supplier,
     system,
@@ -85,4 +86,5 @@ api_router.include_router(goods.router)
 api_router.include_router(log.router)
 api_router.include_router(task.router)
 api_router.include_router(warehouse.router)
+api_router.include_router(inventory.router)
 api_router.include_router(supplier.router)

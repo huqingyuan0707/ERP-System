@@ -65,7 +65,7 @@ async def _grant(role_id: int, perm_ids: list[int]) -> None:
 async def _create_role_with_perms(codes: list[str]) -> int:
     """创建角色并授予指定权限码，返回角色 id。"""
     async with AsyncSessionLocal() as session:
-        role = SysRole(code=_role_code(), name="测试角色", data_scope=1, status=1)
+        role = SysRole(code=_role_code(), name="测试角色", data_scope=1, status=1, tenant_id=1)
         session.add(role)
         await session.flush()
         perm_ids = (
@@ -89,6 +89,7 @@ async def _create_user_with_role(username: str, role_id: int, status: int = 1) -
             password_hash=hash_password(PASSWORD),
             real_name="权限测试用户",
             status=status,
+            tenant_id=1,
         )
         session.add(user)
         await session.flush()

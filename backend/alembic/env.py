@@ -61,6 +61,14 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
+    # 若调用方（如 app/db/init_db.py）通过 config.attributes["connection"] 传入了
+    # 已建立的连接，则复用它执行迁移，保证迁移与调用方处于同一事务/同一连接，
+    # 迁移产生的种子数据对调用方立即可见。
+    # 未传入时保持原行为：自行创建引擎连接。
+    external_connection = config.attributes.get("connection")
+    if external_connection is not None:
+        do_run_migrations(external_connection)
+        return
     asyncio.run(run_async_migrations())
 
 
