@@ -1,29 +1,39 @@
 name: AI Code Review
 
 on:
+  # 每次提交（push）都评审：增量 diff 评审结果以「提交评论」形式挂在该 commit 上
+  push:
+    branches: ['**']
+    paths-ignore:
+      - '**/*.md'
+  # PR 打开/更新时评审：结果以 PR 评论形式发布
   pull_request:
     types: [opened, synchronize, reopened]
 
 permissions:
-  pull-requests: write
-  contents: read
+  contents: write      # 发布提交评论
+  pull-requests: write # 发布 PR 评论
 
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
-          fetch-depth: 0
+          fetch-depth: 0    # 需要完整历史以计算 push 前后的增量 diff
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: 运行 AI 评审并评论到 PR
+      - name: 运行 AI 评审并发布评论
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          REVIEW_MODE: ${{ github.event_name == 'pull_request' && 'pr' || 'commit' }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.sha }}
+          REVIEW_BASE: ${{ github.event.before }}
+          REPO: ${{ github.repository }}
         run: python scripts/ai_review.py
