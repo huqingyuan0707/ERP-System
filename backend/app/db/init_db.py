@@ -132,7 +132,9 @@ async def init_db() -> None:
                 await conn.run_sync(_stamp_head)
                 logger.info("新库已建表并 stamp 到 alembic head（迁移未执行）")
         else:
-            # 已纳管的库：不再 create_all 改结构，仅 stamp 到 head
+            # 已纳管的库：仍补建元数据中存在但库里缺失的表（如后加的财务表），
+            # create_all 幂等、只增不删不改已有结构；随后将版本标记为 head
+            await conn.run_sync(Base.metadata.create_all)
             head = _alembic_head()
             if head:
                 if revision != head:
@@ -244,6 +246,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     goods_menu = next(menu for menu in menus if menu.perm_code == "base:goods:list")
     warehouse_menu = next(menu for menu in menus if menu.perm_code == "base:warehouse:list")
     supplier_menu = next(menu for menu in menus if menu.perm_code == "base:supplier:list")
+    customer_menu = next(menu for menu in menus if menu.perm_code == "base:customer:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -267,6 +270,9 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("新增供应商", "base:supplier:add", supplier_menu.id, 1),
         _button("修改供应商", "base:supplier:edit", supplier_menu.id, 2),
         _button("删除供应商", "base:supplier:delete", supplier_menu.id, 3),
+        _button("新增客户", "base:customer:add", customer_menu.id, 1),
+        _button("修改客户", "base:customer:edit", customer_menu.id, 2),
+        _button("删除客户", "base:customer:delete", customer_menu.id, 3),
         _button("查看操作日志", "sys:log:view", user_menu.id, 6),
         _button("查看异步任务", "sys:task:view", user_menu.id, 7),
         _button("超级权限", "*", dir_sys.id, 99),
@@ -486,6 +492,68 @@ async def _ensure_permissions(session: AsyncSession) -> None:
         ).scalars().all()
     )
     for perm in supplier_perms:
+        granted = await session.scalar(
+            select(SysRolePermission.role_id).where(
+                SysRolePermission.role_id == admin_role.id,
+                SysRolePermission.permission_id == perm.id,
+            )
+        )
+        if granted is None:
+            session.add(SysRolePermission(role_id=admin_role.id, permission_id=perm.id))
+    await session.flush()
+
+    # 客户菜单与按钮权限：首次初始化已播种菜单，这里对老库补齐菜单与按钮，并授权管理员
+    customer_menu = await session.scalar(
+        select(SysPermission).where(SysPermission.perm_code == "base:customer:list")
+    )
+    if customer_menu is None:
+        dir_base = await session.scalar(
+            select(SysPermission).where(
+                SysPermission.type == 1, SysPermission.route_path == "/base"
+            )
+        )
+        customer_menu = SysPermission(
+            name="客户管理",
+            type=2,
+            perm_code="base:customer:list",
+            route_path="/base/customer",
+            component="base/customer/index",
+            parent_id=dir_base.id if dir_base is not None else None,
+            sort=4,
+        )
+        session.add(customer_menu)
+        await session.flush()
+
+    customer_button_specs = (
+        ("新增客户", "base:customer:add", 1),
+        ("修改客户", "base:customer:edit", 2),
+        ("删除客户", "base:customer:delete", 3),
+    )
+    for name, perm_code, sort in customer_button_specs:
+        exists = await session.scalar(
+            select(SysPermission.perm_code).where(SysPermission.perm_code == perm_code)
+        )
+        if exists is None:
+            session.add(
+                SysPermission(
+                    name=name,
+                    type=3,
+                    perm_code=perm_code,
+                    parent_id=customer_menu.id,
+                    sort=sort,
+                )
+            )
+    await session.flush()
+
+    # 超级管理员默认拥有全部权限，补齐后同步授权
+    customer_perms = list(
+        (
+            await session.execute(
+                select(SysPermission).where(SysPermission.perm_code.like("base:customer:%"))
+            )
+        ).scalars().all()
+    )
+    for perm in customer_perms:
         granted = await session.scalar(
             select(SysRolePermission.role_id).where(
                 SysRolePermission.role_id == admin_role.id,
