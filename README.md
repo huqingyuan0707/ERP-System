@@ -139,6 +139,9 @@ npm run lint                                          # ESLint
 
 ## Docker 部署
 
+> 完整的服务器部署步骤、CI/CD 流水线配置与故障排查清单见 [`docs/部署与流水线说明.md`](docs/部署与流水线说明.md)。
+
+
 仓库提供 `docker-compose.yml`（PostgreSQL / Redis / MinIO / 后端 / 前端 / Nginx）与一键部署脚本（`scripts/`）。
 
 > 说明：项目后端当前使用本地 `exports/` 目录存储导出文件，未实际接入 MinIO，compose 中的 minio 服务仅作后续扩展保留。
