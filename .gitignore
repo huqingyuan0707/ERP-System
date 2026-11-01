@@ -13,6 +13,10 @@ venv/
 htmlcov/
 # pytype 类型检查的中间产物目录
 .pytype/
+# 代码质量检查的本地报告产物（pylint.json、质量报告等），不入库
+backend/reports/
+# 一次性修复脚本（已完成使命，不保留）
+backend/_fix_perm_param.py
 
 # Node
 node_modules/

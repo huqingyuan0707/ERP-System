@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends
 
 from app.core.deps import CurrentUserDep, DbDep, TenantDep, get_redis, require_perm
 from app.core.exceptions import AppException, ErrorCode
+from app.models.idempotency import IdempotencyKey
 from app.models.sys import SysUser
 from app.schemas.common import ApiResponse, success_response
 from app.schemas.inventory import (
@@ -42,13 +43,17 @@ async def _idem_check(
     biz_type: str,
     idempotency_key: str | None,
     request_body: Any | None = None,
-) -> IdempotencyService | None:
+) -> tuple[IdempotencyKey | None, bool]:
     """执行幂等检查。
 
     返回 (entity, is_duplicate)：
       - entity 为 IdempotencyKey，is_duplicate=False：本次应执行业务；
       - entity 为 IdempotencyKey，is_duplicate=True：重复提交，返回缓存结果；
       - 未提供幂等键时返回 (None, False)。
+
+    注意：返回值是二元组，不是 IdempotencyService；
+    原标注写成 `IdempotencyService | None` 与实际返回值不符，
+    会让调用方的元组解包在静态检查下无法通过（pytype 报 attribute-error）。
     """
     if not idempotency_key:
         return None, False
@@ -82,8 +87,8 @@ async def change_stock(
     db: DbDep,
     tenant_id: TenantDep,
     current_user: CurrentUserDep,
+    _: Annotated[SysUser, Depends(require_perm(INV_CHANGE_STOCK_PERM))],
     redis=Depends(get_redis),
-    _: Annotated[SysUser, Depends(require_perm(INV_CHANGE_STOCK_PERM))] = None,
 ) -> ApiResponse[ChangeStockOut]:
     """库存变更统一接口（入库/出库/退货/调拨/盘点）。
 
@@ -124,8 +129,8 @@ async def lock_stock(
     db: DbDep,
     tenant_id: TenantDep,
     current_user: CurrentUserDep,
+    _: Annotated[SysUser, Depends(require_perm(INV_LOCK_STOCK_PERM))],
     redis=Depends(get_redis),
-    _: Annotated[SysUser, Depends(require_perm(INV_LOCK_STOCK_PERM))] = None,
 ) -> ApiResponse[StockOut]:
     """库存锁定：available_qty -= qty, locked_qty += qty。
 
@@ -165,8 +170,8 @@ async def unlock_stock(
     db: DbDep,
     tenant_id: TenantDep,
     current_user: CurrentUserDep,
+    _: Annotated[SysUser, Depends(require_perm(INV_UNLOCK_STOCK_PERM))],
     redis=Depends(get_redis),
-    _: Annotated[SysUser, Depends(require_perm(INV_UNLOCK_STOCK_PERM))] = None,
 ) -> ApiResponse[StockOut]:
     """库存释放：locked_qty -= qty, available_qty += qty。
 

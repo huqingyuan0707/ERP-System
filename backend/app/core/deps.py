@@ -5,6 +5,7 @@ from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -14,12 +15,6 @@ from app.db.session import get_db
 from app.models.sys import SysUser
 from app.services.auth import AuthService
 
-try:
-    from redis.asyncio import Redis
-except ImportError:  # pragma: no cover - Redis 未安装时降级
-    Redis = None  # type: ignore[assignment]
-
-
 __all__ = [
     "AccessTokenPayloadDep",
     "CurrentUserDep",
@@ -28,6 +23,7 @@ __all__ = [
     "get_current_tenant",
     "get_current_user",
     "get_db",
+    "get_redis",
     "require_perm",
 ]
 
@@ -92,8 +88,11 @@ async def get_current_tenant(
 TenantDep = Annotated[int, Depends(get_current_tenant)]
 
 
+# Redis 是 requirements.txt 中的强依赖，直接导入即可；
+# 这里不再用 try/except 降级，避免类型标注退化成 Optional[type[Redis]] 而让类型检查无法推断。
 async def get_redis() -> Redis | None:
     """Redis 客户端依赖，用于幂等校验与缓存；未配置 REDIS_URL 时返回 None。"""
-    if Redis is None or not settings.REDIS_URL:
+    if not settings.REDIS_URL:
+        # 未配置 Redis 地址时不做缓存，调用方需自行处理 None
         return None
     return Redis.from_url(settings.REDIS_URL, decode_responses=True)

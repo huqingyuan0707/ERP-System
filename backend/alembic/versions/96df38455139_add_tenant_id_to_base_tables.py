@@ -32,12 +32,16 @@ _BIGINT_PK = sa.BigInteger().with_variant(sa.Integer, "sqlite")
 
 def _table_has_column(conn, table: str, column: str) -> bool:
     inspector = sa.inspect(conn)
+    if not inspector.has_table(table):
+        return False
     cols = {c["name"] for c in inspector.get_columns(table)}
     return column in cols
 
 
 def _index_exists(conn, table: str, name: str) -> bool:
     inspector = sa.inspect(conn)
+    if not inspector.has_table(table):
+        return False
     return name in {idx["name"] for idx in inspector.get_indexes(table)}
 
 
@@ -150,23 +154,30 @@ def upgrade() -> None:
         )
 
     # ---- inv_stock ----
-    if not _table_has_column(conn, "inv_stock", "tenant_id"):
-        op.add_column(
-            "inv_stock",
-            sa.Column("tenant_id", _BIGINT_PK, nullable=False, server_default="1"),
-        )
-    if not _index_exists(conn, "inv_stock", "uq_inv_stock_warehouse_goods_tenant"):
-        op.create_index(
-            "uq_inv_stock_warehouse_goods_tenant",
-            "inv_stock",
-            ["warehouse_id", "goods_id", "tenant_id"],
-            unique=True,
-            sqlite_where=sa.text("is_deleted = 0"),
-            postgresql_where=sa.text("is_deleted = false"),
-        )
+    # These tables were introduced alongside this revision but were
+    # historically created by application startup.  A direct Alembic run on
+    # an empty database reaches this revision before their create-table
+    # migration; leave them to the follow-up revision in that case.
+    if sa.inspect(conn).has_table("inv_stock"):
+        if not _table_has_column(conn, "inv_stock", "tenant_id"):
+            op.add_column(
+                "inv_stock",
+                sa.Column("tenant_id", _BIGINT_PK, nullable=False, server_default="1"),
+            )
+        if not _index_exists(conn, "inv_stock", "uq_inv_stock_warehouse_goods_tenant"):
+            op.create_index(
+                "uq_inv_stock_warehouse_goods_tenant",
+                "inv_stock",
+                ["warehouse_id", "goods_id", "tenant_id"],
+                unique=True,
+                sqlite_where=sa.text("is_deleted = 0"),
+                postgresql_where=sa.text("is_deleted = false"),
+            )
 
     # ---- inv_stock_flow ----
-    if not _table_has_column(conn, "inv_stock_flow", "tenant_id"):
+    if sa.inspect(conn).has_table("inv_stock_flow") and not _table_has_column(
+        conn, "inv_stock_flow", "tenant_id"
+    ):
         op.add_column(
             "inv_stock_flow",
             sa.Column("tenant_id", _BIGINT_PK, nullable=False, server_default="1"),

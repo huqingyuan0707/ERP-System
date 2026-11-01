@@ -25,11 +25,11 @@ TASK_VIEW_PERM = "sys:task:view"
 async def list_tasks(
     db: DbDep,
     current_user: CurrentUserDep,
+    _: Annotated[SysUser, Depends(require_perm(TASK_VIEW_PERM))],
     task_type: str | None = Query(default=None, description="任务类型"),
     status: int | None = Query(default=None, description="状态 1=待执行 2=执行中 3=成功 4=失败"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    _: Annotated[SysUser, Depends(require_perm(TASK_VIEW_PERM))] = None,
 ) -> ApiResponse[PageResult[TaskOut]]:
     """异步任务分页查询。"""
     query = TaskQuery(task_type=task_type, status=status, page=page, page_size=page_size)
@@ -42,7 +42,7 @@ async def get_task(
     task_id: str,
     db: DbDep,
     current_user: CurrentUserDep,
-    _: Annotated[SysUser, Depends(require_perm(TASK_VIEW_PERM))] = None,
+    _: Annotated[SysUser, Depends(require_perm(TASK_VIEW_PERM))],
 ) -> ApiResponse[TaskOut]:
     """根据 taskId 查询单条任务，前端轮询进度与下载地址。"""
     result = await TaskService(db).get_task_by_id(task_id)

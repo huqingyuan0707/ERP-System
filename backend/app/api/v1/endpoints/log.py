@@ -41,6 +41,7 @@ async def list_oper_logs(
     request: Request,
     db: DbDep,
     current_user: CurrentUserDep,
+    _: Annotated[SysUser, Depends(require_perm(LOG_VIEW_PERM))],
     module: str | None = Query(default=None, description="模块名称模糊匹配"),
     action: str | None = Query(default=None, description="动作模糊匹配"),
     user_id: int | None = Query(default=None, description="操作人ID"),
@@ -49,7 +50,6 @@ async def list_oper_logs(
     end_date: str | None = Query(default=None, description="结束日期 YYYY-MM-DD"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    _: Annotated[SysUser, Depends(require_perm(LOG_VIEW_PERM))] = None,
 ) -> ApiResponse[PageResult[OperLogOut]]:
     """操作日志分页查询（只读）。"""
     query = OperLogQuery(
@@ -71,13 +71,13 @@ async def list_login_logs(
     request: Request,
     db: DbDep,
     current_user: CurrentUserDep,
+    _: Annotated[SysUser, Depends(require_perm(LOG_VIEW_PERM))],
     username: str | None = Query(default=None, description="账号模糊匹配"),
     status: int | None = Query(default=None, description="状态 1=成功 0=失败"),
     start_date: str | None = Query(default=None, description="开始日期 YYYY-MM-DD"),
     end_date: str | None = Query(default=None, description="结束日期 YYYY-MM-DD"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    _: Annotated[SysUser, Depends(require_perm(LOG_VIEW_PERM))] = None,
 ) -> ApiResponse[PageResult[LoginLogOut]]:
     """登录日志分页查询（只读）。"""
     query = LoginLogQuery(

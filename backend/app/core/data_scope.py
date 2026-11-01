@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.sys import SysDept, SysRole, SysRoleDept, SysUser, SysUserRole
 
@@ -93,12 +94,15 @@ async def apply_scope(
     stmt: Select,
     model: type,
     ctx: ScopeContext,
-    dept_id_column: object | None = None,
+    dept_id_column: ColumnElement[int] | None = None,
 ) -> Select:
     """为查询语句追加数据范围过滤；列表、count、导出、报表共用。
 
     ``model`` 需含 ``created_by`` 列；``dept_id_column`` 为单据部门列
     （存在时数据范围 2 优先按部门列过滤）。
+    部门列的取值是整数部门 ID，所以标注成 ``ColumnElement[int]``；
+    早前标注成 ``ColumnElement[bool]`` 与实际列类型不符，会让类型检查
+    在 ``in_(dept_ids)`` 处报参数类型错误。
     """
     if ctx.scope == SCOPE_ALL:
         return stmt
@@ -107,7 +111,8 @@ async def apply_scope(
 
     dept_ids = await _visible_dept_ids(db, ctx)
     if dept_id_column is not None:
-        conditions = [model.created_by == ctx.user_id]
+        # 可见范围 = 本人创建 OR 部门列落在可见部门集合内
+        conditions: list[ColumnElement[bool]] = [model.created_by == ctx.user_id]
         if dept_ids:
             conditions.append(dept_id_column.in_(dept_ids))
         return stmt.where(or_(*conditions))

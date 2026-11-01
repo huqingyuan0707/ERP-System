@@ -9,6 +9,8 @@ import hashlib
 import json
 from typing import Any
 
+from pydantic import BaseModel
+
 from app.core.exceptions import AppException, ErrorCode
 from app.models.idempotency import IdempotencyKey
 from app.repositories.idempotency import IdempotencyRepository
@@ -32,8 +34,18 @@ class IdempotencyService:
 
     @staticmethod
     def hash_body(body: Any) -> str:
-        """对请求体做 SHA-256 哈希，用于判断重复请求的参数是否一致。"""
-        raw = json.dumps(body, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        """对请求体做 SHA-256 哈希，用于判断重复请求的参数是否一致。
+
+        请求体可能是普通字典，也可能是 Pydantic 模型；
+        Pydantic 模型不能直接 json.dumps（会抛 TypeError），
+        所以先用 model_dump(mode="json") 转成可 JSON 序列化的字典。
+        """
+        if isinstance(body, BaseModel):
+            # mode="json" 保证 Decimal、datetime 等非 JSON 原生类型被转成字符串/数字
+            payload = body.model_dump(mode="json")
+        else:
+            payload = body
+        raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()[:16]
 
     async def check_and_register(
@@ -91,9 +103,16 @@ class IdempotencyService:
         )
 
     async def confirm_success(
-        self, entity: IdempotencyKey, response_body: Any | None = None
+        self, entity: IdempotencyKey | None, response_body: Any | None = None
     ) -> None:
-        """将幂等键标记为成功，并可选地缓存响应体供重复请求返回。"""
+        """将幂等键标记为成功，并可选地缓存响应体供重复请求返回。
+
+        ``entity`` 允许为 None：调用方未提供幂等键时没有落库记录，
+        此时直接返回即可（业务本身已经执行成功，不能因为没有幂等记录而报错）。
+        """
+        if entity is None:
+            # 没有幂等记录可更新，直接返回，不影响主流程
+            return
         response_json = json.dumps(response_body, ensure_ascii=False) if response_body is not None else None
         await self._repo.mark_success(entity, response_json)
 

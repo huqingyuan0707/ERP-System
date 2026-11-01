@@ -42,8 +42,8 @@ IMPORT_MAX_SIZE = 5 * 1024 * 1024
 async def import_goods(
     db: DbDep,
     current_user: CurrentUserDep,
+    _: Annotated[SysUser, Depends(require_perm(IMPORT_GOODS_PERM))],
     file: UploadFile = File(..., description="Excel 文件"),
-    _: Annotated[SysUser, Depends(require_perm(IMPORT_GOODS_PERM))] = None,
 ) -> ApiResponse[GoodsImportResult]:
     """上传商品 Excel，逐行校验，全部成功才入库，失败返回逐行错误报告。"""
     content = await file.read()
@@ -58,7 +58,7 @@ async def export_goods(
     db: DbDep,
     current_user: CurrentUserDep,
     query: Annotated[GoodsQuery, Query()],
-    _: Annotated[SysUser, Depends(require_perm(EXPORT_GOODS_PERM))] = None,
+    _: Annotated[SysUser, Depends(require_perm(EXPORT_GOODS_PERM))],
 ) -> ApiResponse[TaskOut]:
     """商品导出：按当前筛选条件提交异步任务，返回 taskId，前端轮询 /sys/tasks/{taskId}。"""
     task = await ExcelExportService(db).export_goods(
@@ -72,9 +72,9 @@ async def export_goods(
 async def export_stocks(
     db: DbDep,
     current_user: CurrentUserDep,
+    _: Annotated[SysUser, Depends(require_perm(EXPORT_STOCK_PERM))],
     warehouse_id: int | None = Query(default=None),
     keyword: str | None = Query(default=None),
-    _: Annotated[SysUser, Depends(require_perm(EXPORT_STOCK_PERM))] = None,
 ) -> ApiResponse[TaskOut]:
     """库存导出：提交异步任务，返回 taskId。"""
     task = await ExcelExportService(db).export_stocks(
@@ -89,8 +89,8 @@ async def export_stocks(
 async def export_report(
     db: DbDep,
     current_user: CurrentUserDep,
+    _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))],
     report_type: str = Query(..., description="报表类型 purchase/sales/inventory/finance"),
-    _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))] = None,
 ) -> ApiResponse[TaskOut]:
     """通用报表导出：提交异步任务，返回 taskId。"""
     task = await ExcelExportService(db).export_report(
@@ -107,7 +107,7 @@ async def export_statement(
     statement_id: int,
     db: DbDep,
     current_user: CurrentUserDep,
-    _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))] = None,
+    _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))],
 ) -> ApiResponse[TaskOut]:
     """对账单导出：提交异步任务，返回 taskId。"""
     task = await ExcelExportService(db).export_statement(
@@ -158,7 +158,7 @@ async def download_export(
     summary="下载商品导入模板（兼容别名）",
 )
 async def download_goods_template(
-    _: Annotated[SysUser, Depends(require_perm(IMPORT_GOODS_PERM))] = None,
+    _: Annotated[SysUser, Depends(require_perm(IMPORT_GOODS_PERM))],
 ):
     """下载商品导入Excel模板文件。"""
     content = build_import_template()

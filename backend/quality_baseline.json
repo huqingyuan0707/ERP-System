@@ -1,0 +1,189 @@
+{
+  "schemaVersion": "1.0",
+  "generatedAt": "",
+  "description": "存量代码问题基线。基线内的问题不阻断合并，但会在报告中提示；基线之外的新问题按门禁分级策略判定（阻断 / 告警）。阻断类问题不收录进基线，必须修复。",
+  "findings": [
+    {
+      "fingerprint": "backend/app/main.py|W0621|Redefining name 'X' from outer scope (line N)",
+      "file": "backend/app/main.py",
+      "messageId": "W0621",
+      "category": "other",
+      "message": "Redefining name 'app' from outer scope (line 23)"
+    },
+    {
+      "fingerprint": "backend/app/main.py|W0613|Unused argument 'X'",
+      "file": "backend/app/main.py",
+      "messageId": "W0613",
+      "category": "other",
+      "message": "Unused argument 'app'"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/auth.py|W0613|Unused argument 'X'",
+      "file": "backend/app/api/v1/endpoints/auth.py",
+      "messageId": "W0613",
+      "category": "other",
+      "message": "Unused argument 'current_user'"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/export.py|C0103|Argument name \"fileName\" doesn'X'^[a-z_][a-zN-N_]{N,N}$' pattern",
+      "file": "backend/app/api/v1/endpoints/export.py",
+      "messageId": "C0103",
+      "category": "other",
+      "message": "Argument name \"fileName\" doesn't conform to '^[a-z_][a-z0-9_]{0,63}$' pattern"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/goods.py|W0613|Unused argument 'X'",
+      "file": "backend/app/api/v1/endpoints/goods.py",
+      "messageId": "W0613",
+      "category": "other",
+      "message": "Unused argument 'current_user'"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/goods.py|W0611|Unused import json",
+      "file": "backend/app/api/v1/endpoints/goods.py",
+      "messageId": "W0611",
+      "category": "other",
+      "message": "Unused import json"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/inventory.py|W0212|Access to a protected member _repo of a client class",
+      "file": "backend/app/api/v1/endpoints/inventory.py",
+      "messageId": "W0212",
+      "category": "other",
+      "message": "Access to a protected member _repo of a client class"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/inventory.py|W0613|Unused argument 'X'",
+      "file": "backend/app/api/v1/endpoints/inventory.py",
+      "messageId": "W0613",
+      "category": "other",
+      "message": "Unused argument 'redis'"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/log.py|W0613|Unused argument 'X'",
+      "file": "backend/app/api/v1/endpoints/log.py",
+      "messageId": "W0613",
+      "category": "other",
+      "message": "Unused argument 'request'"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/system.py|W0611|Unused import json",
+      "file": "backend/app/api/v1/endpoints/system.py",
+      "messageId": "W0611",
+      "category": "other",
+      "message": "Unused import json"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/task.py|W0613|Unused argument 'X'",
+      "file": "backend/app/api/v1/endpoints/task.py",
+      "messageId": "W0613",
+      "category": "other",
+      "message": "Unused argument 'current_user'"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/warehouse.py|W9015|\"redis\" missing in parameter documentation",
+      "file": "backend/app/api/v1/endpoints/warehouse.py",
+      "messageId": "W9015",
+      "category": "other",
+      "message": "\"redis\" missing in parameter documentation"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/warehouse.py|W9016|\"redis\" missing in parameter type documentation",
+      "file": "backend/app/api/v1/endpoints/warehouse.py",
+      "messageId": "W9016",
+      "category": "other",
+      "message": "\"redis\" missing in parameter type documentation"
+    },
+    {
+      "fingerprint": "backend/app/api/v1/endpoints/warehouse.py|W0611|Unused import json",
+      "file": "backend/app/api/v1/endpoints/warehouse.py",
+      "messageId": "W0611",
+      "category": "other",
+      "message": "Unused import json"
+    },
+    {
+      "fingerprint": "backend/app/core/cache.py|C0103|Constant name \"_redis_client\" doesn't conform to UPPER_CASE naming style",
+      "file": "backend/app/core/cache.py",
+      "messageId": "C0103",
+      "category": "other",
+      "message": "Constant name \"_redis_client\" doesn't conform to UPPER_CASE naming style"
+    },
+    {
+      "fingerprint": "backend/app/core/cache.py|C0103|Constant name \"_redis_checked\" doesn't conform to UPPER_CASE naming style",
+      "file": "backend/app/core/cache.py",
+      "messageId": "C0103",
+      "category": "other",
+      "message": "Constant name \"_redis_checked\" doesn't conform to UPPER_CASE naming style"
+    },
+    {
+      "fingerprint": "backend/app/core/exceptions.py|W0613|Unused argument 'X'",
+      "file": "backend/app/core/exceptions.py",
+      "messageId": "W0613",
+      "category": "other",
+      "message": "Unused argument 'request'"
+    },
+    {
+      "fingerprint": "backend/app/core/logging.py|C0103|Constant name \"_configured\" doesn't conform to UPPER_CASE naming style",
+      "file": "backend/app/core/logging.py",
+      "messageId": "C0103",
+      "category": "other",
+      "message": "Constant name \"_configured\" doesn't conform to UPPER_CASE naming style"
+    },
+    {
+      "fingerprint": "backend/app/db/session.py|C0103|Constant name \"AsyncSessionLocal\" doesn't conform to UPPER_CASE naming style",
+      "file": "backend/app/db/session.py",
+      "messageId": "C0103",
+      "category": "other",
+      "message": "Constant name \"AsyncSessionLocal\" doesn't conform to UPPER_CASE naming style"
+    },
+    {
+      "fingerprint": "backend/app/models/finance.py|W0611|Unused DateTime imported from sqlalchemy",
+      "file": "backend/app/models/finance.py",
+      "messageId": "W0611",
+      "category": "other",
+      "message": "Unused DateTime imported from sqlalchemy"
+    },
+    {
+      "fingerprint": "backend/app/models/finance.py|W0611|Unused Text imported from sqlalchemy",
+      "file": "backend/app/models/finance.py",
+      "messageId": "W0611",
+      "category": "other",
+      "message": "Unused Text imported from sqlalchemy"
+    },
+    {
+      "fingerprint": "backend/app/models/finance.py|W0611|Unused func imported from sqlalchemy",
+      "file": "backend/app/models/finance.py",
+      "messageId": "W0611",
+      "category": "other",
+      "message": "Unused func imported from sqlalchemy"
+    },
+    {
+      "fingerprint": "backend/app/services/excel_export.py|C0121|Comparison 'X' should be 'X' if checking for the singleton value False, or 'X' if testing for falsiness",
+      "file": "backend/app/services/excel_export.py",
+      "messageId": "C0121",
+      "category": "other",
+      "message": "Comparison 'InvStock.is_deleted == False' should be 'InvStock.is_deleted is False' if checking for the singleton value False, or 'not InvStock.is_deleted' if testing for falsiness"
+    },
+    {
+      "fingerprint": "backend/app/services/excel_export.py|W0613|Unused argument 'X'",
+      "file": "backend/app/services/excel_export.py",
+      "messageId": "W0613",
+      "category": "other",
+      "message": "Unused argument 'created_by'"
+    },
+    {
+      "fingerprint": "backend/app/services/inventory.py|W0612|Unused variable 'X'",
+      "file": "backend/app/services/inventory.py",
+      "messageId": "W0612",
+      "category": "other",
+      "message": "Unused variable 'before_qty'"
+    },
+    {
+      "fingerprint": "backend/app/services/inventory.py|W0611|Unused InvStock imported from app.models.inventory",
+      "file": "backend/app/services/inventory.py",
+      "messageId": "W0611",
+      "category": "other",
+      "message": "Unused InvStock imported from app.models.inventory"
+    }
+  ]
+}
