@@ -31,9 +31,16 @@ TOKEN = os.environ.get("GH_TOKEN", "")
 MAX_DIFF = 16000  # 截断，避免超上下文长度
 
 
-def fail(msg):
-    print(msg)
+def skip(msg):
+    """无需评审时跳过：退出码 0，不视为失败。"""
+    print("[跳过] %s" % msg)
     raise SystemExit(0)
+
+
+def error(msg):
+    """真正的故障：退出码非 0，避免问题被当成正常跳过而静默。"""
+    print("[错误] %s" % msg)
+    raise SystemExit(1)
 
 
 def pick_model():
@@ -45,27 +52,29 @@ def pick_model():
             "qwen-plus",
             DASHSCOPE_KEY,
         )
-    fail("未配置 DEEPSEEK_API_KEY / DASHSCOPE_API_KEY，跳过评审")
+    skip("未配置 DEEPSEEK_API_KEY / DASHSCOPE_API_KEY，无法评审")
 
 
 def get_diff():
     """按模式获取待评审的 diff 文本。"""
     if MODE == "pr":
         if not PR:
-            fail("pr 模式缺少 PR_NUMBER")
+            error("pr 模式缺少 PR_NUMBER")
         return subprocess.run(["gh", "pr", "diff", PR], capture_output=True, text=True).stdout
     if not SHA:
-        fail("commit 模式缺少 COMMIT_SHA")
+        error("commit 模式缺少 COMMIT_SHA")
     base = BASE
     if not base or set(base) == {"0"}:
         base = SHA + "^"  # 首次推送没有基线，退化为与父提交比较
-    for sep in ("...", ".."):
-        res = subprocess.run(
-            ["git", "diff", "--no-color", base + sep + SHA], capture_output=True, text=True
-        )
-        if res.returncode == 0:
-            return res.stdout
-    fail("获取 diff 失败")
+    # push 场景用两点比较（base..sha）= 本次提交的增量；
+    # 三点是 merge-base 语义，范围可能与预期不一致，这里不混用
+    res = subprocess.run(
+        ["git", "diff", "--no-color", base + ".." + SHA], capture_output=True, text=True
+    )
+    if res.returncode != 0:
+        error("获取 diff 失败：%s" % res.stderr.strip()[:200])
+    return res.stdout
+    error("获取 diff 失败：%s" % res.stderr.strip()[:200])
 
 def build_prompt(diff):
     return f"""你是一名资深代码评审专家。请评审以下代码变更（ERP 系统：后端 FastAPI/Python，前端 Vue/TypeScript/Vite）。
@@ -110,7 +119,7 @@ def publish(review):
         print("AI 评审已发布到 PR #%s" % PR)
         return
     if not REPO:
-        fail("commit 模式缺少 REPO")
+        error("commit 模式缺少 REPO")
     path = "/tmp/ai-review.md"
     with open(path, "w", encoding="utf-8") as f:
         f.write(comment)
@@ -128,10 +137,10 @@ def publish(review):
 
 def main():
     if not TOKEN:
-        fail("缺少 GH_TOKEN")
+        error("缺少 GH_TOKEN")
     diff = get_diff()
     if not diff.strip():
-        fail("无变更内容，跳过评审")
+        skip("无变更内容，无需评审")
     review = call_model(diff[:MAX_DIFF])
     publish(review)
 
