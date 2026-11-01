@@ -57,6 +57,37 @@ fi
 
 echo "==> docker compose pull ..."
 docker compose pull
+
+# 迁移前自动备份：迁移失败时据此回滚数据库
+echo "==> 迁移前备份数据库 ..."
+BACKUP_DIR=""
+if [ -f scripts/backup.sh ]; then
+  if bash scripts/backup.sh; then
+    BACKUP_DIR="$(ls -1d backups/*/ 2>/dev/null | sort | tail -1 || true)"
+    echo "    备份目录：${BACKUP_DIR:-未找到}"
+  else
+    echo "    备份失败（将继续迁移，请留意磁盘与权限）" >&2
+  fi
+fi
+
+# 迁移：结构变更以 alembic 为准（init_db 的 create_all 只补建缺失表，不会改已有表）
+echo "==> 执行数据库迁移 (alembic upgrade head) ..."
+if ! docker compose run --rm backend alembic upgrade head; then
+  echo "!!! 数据库迁移失败，正在回滚 ..." >&2
+  if [ -n "$BACKUP_DIR" ] && [ -f "${BACKUP_DIR}pg.sql" ]; then
+    echo "    从备份恢复：${BACKUP_DIR}pg.sql" >&2
+    if docker compose exec -T postgres psql -U erp -d erp < "${BACKUP_DIR}pg.sql"; then
+      echo "    数据库已回滚到迁移前状态；旧版本容器仍在运行（未执行 up -d）" >&2
+    else
+      echo "    自动回滚失败，请手动执行：" >&2
+      echo "      docker compose exec -T postgres psql -U erp -d erp < ${BACKUP_DIR}pg.sql" >&2
+    fi
+  else
+    echo "    未找到可用备份，请手动确认数据库状态" >&2
+  fi
+  exit 1
+fi
+
 echo "==> docker compose up -d ..."
 docker compose up -d
 

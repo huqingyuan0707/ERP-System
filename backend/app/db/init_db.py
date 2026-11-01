@@ -1,6 +1,19 @@
-"""建表与种子数据（首次启动自动执行，幂等）。"""
+"""建表与种子数据（首次启动自动执行，幂等）。
 
-from sqlalchemy import func, select
+schema 策略（与 alembic 配合，结构变更一律走迁移）：
+- 新库（无 alembic_version 表）：create_all 建表后 stamp 到当前 head，
+  之后的结构变更由 `alembic upgrade head` 负责；
+- 已有库（有 alembic_version）：只补建缺失的表，**绝不修改已有表结构**；
+  若库里的版本落后于代码 head，打印告警提示执行 `alembic upgrade head`。
+"""
+
+import logging
+from pathlib import Path
+
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
@@ -17,14 +30,77 @@ from app.models.sys import (
 )
 
 
+logger = logging.getLogger(__name__)
+
+# backend/alembic.ini（app/db/init_db.py -> backend/）
+ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
+
 DEFAULT_ADMIN_USERNAME = "admin"
 DEFAULT_ADMIN_PASSWORD = "admin123"
+
+
+def _alembic_script() -> ScriptDirectory | None:
+    """加载 alembic 脚本目录；失败返回 None（不阻断服务启动）。"""
+    try:
+        cfg = Config(str(ALEMBIC_INI))
+        return ScriptDirectory.from_config(cfg)
+    except Exception:  # noqa: BLE001  迁移目录缺失时不应影响服务启动
+        logger.warning("未能加载 alembic 脚本目录，请检查 %s", ALEMBIC_INI, exc_info=True)
+        return None
+
+
+def _alembic_head() -> str | None:
+    """读取代码侧当前迁移版本（head）；读不到返回 None。"""
+    script = _alembic_script()
+    if script is None:
+        return None
+    try:
+        return script.get_current_head()
+    except Exception:  # noqa: BLE001
+        logger.warning("未能读取 alembic head", exc_info=True)
+        return None
+
+
+def _current_revision(connection) -> str | None:
+    """读取数据库中记录的迁移版本；没有版本表（全新库）返回 None。"""
+    if "alembic_version" not in inspect(connection).get_table_names():
+        return None
+    rows = connection.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
+    return rows[0] if rows else None
+
+
+def _stamp_head(connection) -> None:
+    """新库建表后打基线：把版本标记为当前 head，后续变更走迁移。"""
+    script = _alembic_script()
+    if script is None:
+        return
+    head = script.get_current_head()
+    if not head:
+        return
+    # 复用外层事务，不额外开启事务
+    MigrationContext.configure(connection).stamp(script, revision=head)
+    logger.info("已创建 alembic 基线版本：%s", head)
 
 
 async def init_db() -> None:
     """建表并写入种子数据。"""
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        revision = await conn.run_sync(_current_revision)
+        if revision is None:
+            # 全新库：建表 + 打基线
+            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(_stamp_head)
+        else:
+            # 已纳管的库：只补建缺失的表，不改动已有表结构
+            await conn.run_sync(Base.metadata.create_all)
+            head = _alembic_head()
+            if head and revision != head:
+                logger.warning(
+                    "数据库迁移版本为 %s，代码 head 为 %s；"
+                    "请执行 `alembic upgrade head` 应用结构变更",
+                    revision,
+                    head,
+                )
     async with AsyncSessionLocal() as session:
         await _seed(session)
 
