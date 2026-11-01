@@ -4,7 +4,6 @@ from decimal import Decimal  # 定点数类型，应付余额汇总用金额类�
 
 from sqlalchemy import (  # 查询类型、绑定参数与读写语句。
     Select,
-    bindparam,
     func,
     or_,
     select,
@@ -12,6 +11,7 @@ from sqlalchemy import (  # 查询类型、绑定参数与读写语句。
 )
 
 from app.models.base_data import BdSupplier  # 供应商表 bd_supplier 的 ORM 模型。
+from app.models.finance import ArApRecord  # 应收应付记录 fin_ar_ap，用于应付引用与余额。
 from app.repositories.base import BaseRepository  # 复用数据库会话与分页等通用操作。
 from app.schemas.supplier import SupplierQuery  # 供应商列表的分页、关键字和状态参数。
 
@@ -19,16 +19,22 @@ from app.schemas.supplier import SupplierQuery  # 供应商列表的分页、关
 # 采购订单中表示"已结清"的状态；其余状态都属于未结采购订单，供应商不可删除。
 CLOSED_ORDER_STATUSES = ("完成", "关闭")
 
-# 引用检查涉及的外部表；这些表由采购、财务模块创建，尚未创建时跳过对应检查。
+# 应付记录中业务方类型：1=供应商（应付），用于区分应收与应付。
+PAYABLE_PARTNER_TYPE_SUPPLIER = 1
+
+# 引用检查涉及的外部表；这些表由采购模块创建，尚未创建时跳过对应检查。
 PURCHASE_ORDER_TABLE = "pur_order"  # 采购订单表，判断是否存在未结采购订单。
 PURCHASE_INBOUND_TABLE = "pur_inbound"  # 采购入库表，判断是否已有历史入库单。
-PAYABLE_TABLE = "fin_payable"  # 应付单据表，判断是否存在应付记录并汇总未核销金额。
 
 
 class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定到供应商模型。
     """封装供应商及外部单据的读写，不直接提交事务或抛出业务异常。"""
 
     model = BdSupplier  # 父类 get、add、paginate 等通用操作使用此模型。
+
+    def __init__(self, db: AsyncSession, tenant_id: int | None = None) -> None:
+        """初始化供应商仓储；tenant_id 用于多租户数据隔离，交由父类统一过滤。"""
+        super().__init__(db, tenant_id=tenant_id)  # 父类自动按租户过滤 get/add/paginate。
 
     async def lock_for_write(self) -> None:  # 将供应商写操作串行化，防止并发生成重复编码。
         """取得当前事务的供应商写锁，无返回值；提交或回滚时由数据库自动释放。
@@ -49,11 +55,14 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
             .with_for_update()  # 行锁随业务事务一起释放。
             .execution_options(populate_existing=True)  # 覆盖会话中可能缓存的旧字段值。
         )  # 业务层仍需判断记录是否已经软删除。
+        stmt = self._apply_tenant_filter(stmt)  # 仅锁定当前租户的数据，避免跨租户误改。
         return (await self.db.execute(stmt)).scalar_one_or_none()  # 不存在时返回 None。
 
     async def max_code(self, prefix: str) -> str | None:  # 为统一编码工具查询最大的已用序号。
         """返回 prefix 下数字序号最大的编码或 None；含软删除记录，忽略非数字自定义编码。"""
-        stmt = select(BdSupplier.code).where(BdSupplier.code.like(f"{prefix}%"))  # 先筛前缀。
+        stmt = self._apply_tenant_filter(  # 先按租户隔离，再筛前缀。
+            select(BdSupplier.code).where(BdSupplier.code.like(f"{prefix}%"))  # 同租户内取号。
+        )  # 空后缀及非数字后缀不会被转成整数。
         codes = (await self.db.execute(stmt)).scalars().all()  # 已删除供应商的编码也不能重复使用。
         numeric_codes = [  # 只让标准数字后缀参与自动取号，不受 SUP-01 等自定义编码影响。
             code  # 保留完整编码，交给统一工具解析下一个序号。
@@ -78,6 +87,7 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
         本方法只返回供应商或 None，是否允许保存由 Service 判断。
         """
         stmt = select(BdSupplier).where(BdSupplier.code == code)  # 包含软删除记录。
+        stmt = self._apply_tenant_filter(stmt)  # 同一租户内编码唯一，跨租户不冲突。
         if exclude_id is not None:  # 没传排除 ID 时，检查全部记录。
             stmt = stmt.where(BdSupplier.id != exclude_id)  # 避免把自己当作重复记录。
         return (await self.db.execute(stmt)).scalar_one_or_none()  # 返回 ORM 对象而非 Row。
@@ -113,6 +123,7 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
             .where(BdSupplier.status == 1)  # 停用的供应商不能被新单据选中。
             .order_by(BdSupplier.code.asc())  # 按编码排序，便于下拉框稳定排列。
         )  # 列表直接返回 ORM 对象，由 Service 转成出参。
+        stmt = self._apply_tenant_filter(stmt)  # 仅当前租户可选，避免跨租户串数据。
         return list((await self.db.execute(stmt)).scalars().all())  # 返回全部可选供应商。
 
     async def existing_tables(self) -> set[str]:  # 判断外部单据表是否已经建好。
@@ -142,12 +153,16 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
         """
         if PURCHASE_ORDER_TABLE not in await self.existing_tables():  # 采购模块尚未上线。
             return False  # 没有订单表就没有引用，跳过检查。
-        # 状态值来自模块常量，不接受用户输入，拼接不会造成注入风险
+        # 状态值与表名均来自模块常量，不接受用户输入，拼接不会造成注入风险。
         closed = ", ".join(f"'{status}'" for status in CLOSED_ORDER_STATUSES)
+        tenant_clause = (  # 租户隔离：当前租户下的订单才算引用。
+            f"AND tenant_id = {self.tenant_id}" if self.tenant_id is not None else ""
+        )
         stmt = text(  # 直接按表名查询，订单表结构由采购模块维护。
             f"SELECT 1 FROM {PURCHASE_ORDER_TABLE} "  # 表名来自模块常量，不接受外部输入。
             "WHERE supplier_id = :supplier_id "  # 限定当前供应商。
             "AND is_deleted IS NOT TRUE "  # 排除已软删除的订单。
+            f"{tenant_clause} "  # 租户隔离条件（可能为空）。
             f"AND status NOT IN ({closed}) LIMIT 1"  # 只看未结清的订单。
         )  # EXISTS 语义：查到一行即说明存在未结订单。
         result = await self.db.execute(stmt, {"supplier_id": supplier_id})  # 参数绑定避免注入。
@@ -161,54 +176,61 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
         """
         if PURCHASE_INBOUND_TABLE not in await self.existing_tables():  # 采购模块尚未上线。
             return False  # 没有入库表就没有引用，跳过检查。
+        tenant_clause = (  # 租户隔离：当前租户下的入库单才算引用。
+            f"AND tenant_id = {self.tenant_id}" if self.tenant_id is not None else ""
+        )
         stmt = text(  # 按供应商查询入库单是否已存在。
             f"SELECT 1 FROM {PURCHASE_INBOUND_TABLE} "  # 表名来自模块常量，不接受外部输入。
             "WHERE supplier_id = :supplier_id "  # 限定当前供应商。
-            "AND is_deleted IS NOT TRUE LIMIT 1"  # 排除已软删除的入库单。
+            "AND is_deleted IS NOT TRUE "  # 排除已软删除的入库单。
+            f"{tenant_clause} LIMIT 1"  # 租户隔离条件（可能为空）。
         )  # EXISTS 语义：查到一行即说明存在历史入库。
         result = await self.db.execute(stmt, {"supplier_id": supplier_id})  # 参数绑定避免注入。
-        return result.first() is not None  # 有记录返回 True。
+        return result.first() is not None  # 有记录返回 True।
 
     async def has_payable(self, supplier_id: int) -> bool:  # 判断是否存在应付记录。
-        """返回该供应商是否存在应付单据；应付表未创建时返回 False。
+        """返回该供应商是否存在未作废的应付记录（fin_ar_ap，partner_type=1）。
 
         只要存在应付记录就说明双方已有账务往来，即使已全额核销，
         也应保留档案以备对账，因此同样阻止删除。
         """
-        if PAYABLE_TABLE not in await self.existing_tables():  # 财务模块尚未上线。
-            return False  # 没有应付表就没有引用，跳过检查。
-        stmt = text(  # 按供应商查询应付单据是否已存在。
-            f"SELECT 1 FROM {PAYABLE_TABLE} "  # 表名来自模块常量，不接受外部输入。
-            "WHERE supplier_id = :supplier_id "  # 限定当前供应商。
-            "AND is_deleted IS NOT TRUE LIMIT 1"  # 排除已软删除的应付单。
-        )  # EXISTS 语义：查到一行即说明存在应付。
-        result = await self.db.execute(stmt, {"supplier_id": supplier_id})  # 参数绑定避免注入。
+        # fin_ar_ap 已随财务模块落成，无需再判断表是否存在，按 ORM 查询更安全。
+        stmt = (
+            select(ArApRecord.id)  # 只取主键判断是否存在，不必返回整行。
+            .where(ArApRecord.partner_type == PAYABLE_PARTNER_TYPE_SUPPLIER)  # 仅供应商应付。
+            .where(ArApRecord.partner_id == supplier_id)  # 限定当前供应商。
+            .where(ArApRecord.status != 4)  # 排除已作废记录。
+        )  # 未核销/部分核销/已对账都算存在应付往来。
+        if self.tenant_id is not None:  # fin_ar_ap 含租户列，按当前租户隔离。
+            stmt = stmt.where(ArApRecord.tenant_id == self.tenant_id)
+        result = await self.db.execute(stmt.limit(1))  # 查到一行即说明存在应付。
         return result.first() is not None  # 有记录返回 True。
 
     async def sum_unpaid_payable(  # 汇总各供应商的未核销应付金额。
         self,  # 使用当前事务会话查询应付表。
         supplier_ids: list[int],  # 由 Service 收集当前页供应商 ID。
     ) -> dict[int, Decimal]:  # 返回供应商 ID 到未核销金额的映射。
-        """按 supplier_ids 汇总未核销应付金额；应付表未创建时返回空映射。
+        """按 supplier_ids 汇总未核销应付余额（fin_ar_ap，partner_type=1）。
 
-        汇总的是 unpaid_amount（未核销金额），已付款部分不计入应付余额；
-        调用方对缺失的供应商按 0 处理即可。
+        未核销金额 = amount - reconciled_amount，已核销部分不计入应付余额；
+        作废状态（status=4）的记录不计入，调用方对缺失供应商按 0 处理。
         """
         if not supplier_ids:  # 当前页没有供应商时，不必访问数据库。
             return {}  # 空映射可直接交给 Service 做余额回填。
-        if PAYABLE_TABLE not in await self.existing_tables():  # 财务模块尚未上线。
-            return {}  # 应付表不存在，所有供应商余额按 0 显示。
         stmt = (  # 按供应商分组汇总未核销金额。
-            text(  # 直接按表名查询，应付表结构由财务模块维护。
-                # 表名来自模块常量，不接受外部输入
-                f"SELECT supplier_id, SUM(COALESCE(unpaid_amount, 0)) FROM {PAYABLE_TABLE} "
-                "WHERE supplier_id IN :supplier_ids "  # 只统计当前页涉及的供应商。
-                "AND is_deleted IS NOT TRUE "  # 排除已软删除的应付单。
-                "GROUP BY supplier_id"  # 每个供应商一行汇总结果。
-            ).bindparams(bindparam("supplier_ids", expanding=True))  # IN 列表使用展开参数绑定。
-        )  # 展开参数由 SQLAlchemy 生成占位符，不做字符串拼接。
-        rows = (await self.db.execute(stmt, {"supplier_ids": supplier_ids})).all()  # 读取汇总结果。
+            select(
+                ArApRecord.partner_id,  # 供应商 ID。
+                func.coalesce(func.sum(ArApRecord.amount - ArApRecord.reconciled_amount), 0),
+            )
+            .where(ArApRecord.partner_type == PAYABLE_PARTNER_TYPE_SUPPLIER)  # 仅供应商应付。
+            .where(ArApRecord.partner_id.in_(supplier_ids))  # 只统计当前页涉及的供应商。
+            .where(ArApRecord.status != 4)  # 排除已作废记录。
+            .group_by(ArApRecord.partner_id)  # 每个供应商一行汇总结果。
+        )  # fin_ar_ap 已存在，无需表存在性判断。
+        if self.tenant_id is not None:  # 按当前租户隔离应付余额。
+            stmt = stmt.where(ArApRecord.tenant_id == self.tenant_id)
+        rows = (await self.db.execute(stmt)).all()  # 读取汇总结果。
         return {  # 转成 ID 到金额的字典，便于按供应商回填。
-            int(row[0]): Decimal(str(row[1] or 0))  # 数据库可能返回 float，统一转 Decimal。
+            int(row[0]): Decimal(str(row[1] or 0))  # 数据库可能返回 Decimal/float，统一转 Decimal。
             for row in rows  # 逐行处理汇总结果。
         }  # 没有应付记录的供应商不会出现在结果中。

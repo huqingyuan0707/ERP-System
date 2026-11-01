@@ -33,10 +33,11 @@ OPER_MODULE = "基础资料"  # sys_oper_log 中记录本业务所属模块。
 class SupplierService:  # 汇集供应商业务规则，接口层只负责调用。
     """提供供应商查询和写操作；删除前检查采购与应付引用，停用只影响新单据选择。"""
 
-    def __init__(self, db: AsyncSession) -> None:  # 接收请求级会话，不创建额外事务。
+    def __init__(self, db: AsyncSession, tenant_id: int) -> None:  # 接收会话与租户，不创建额外事务。
         """用 db 初始化全部仓储；它们共享同一事务，无返回值。"""
         self.db = db  # 提交和回滚统一由本 Service 控制。
-        self.suppliers = SupplierRepository(db)  # 访问供应商及外部单据引用。
+        self.tenant_id = tenant_id  # 当前租户 ID，用于多租户数据隔离。
+        self.suppliers = SupplierRepository(db, tenant_id=tenant_id)  # 按租户隔离供应商及引用。
         self.oper_logs = OperLogRepository(db)  # 写入与供应商变更绑定的审计记录。
 
     async def list_suppliers(  # 分页查询供应商并一次性补齐应付余额。
@@ -116,6 +117,7 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
                 credit_days=payload.credit_days,  # 账期天数，用于推算应付到期日。
                 status=payload.status,  # 1 表示启用，0 表示停用。
                 remark=payload.remark,  # 备注仅保存，不擅自扩充出参字段。
+                tenant_id=self.tenant_id,  # 多租户隔离：归属当前租户。
                 created_by=current_user_id,  # 记录谁创建了这份档案。
                 updated_by=current_user_id,  # 初次保存的更新人同创建人。
             )  # 尚未提交，供应商和日志仍属于同一次业务操作。

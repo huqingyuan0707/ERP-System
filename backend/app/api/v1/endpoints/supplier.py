@@ -23,7 +23,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.deps import DbDep, require_perm
+from app.core.deps import DbDep, TenantDep, require_perm
 from app.models.sys import SysUser
 from app.schemas.common import ApiResponse, PageResult, success_response
 from app.schemas.supplier import (
@@ -48,6 +48,7 @@ async def list_suppliers(  # 分页查询供应商列表的处理函数
     # 从 URL 查询串解析分页与筛选条件，并做类型、格式校验
     query: Annotated[SupplierQuery, Query()],
     db: DbDep,  # 注入本次请求的异步数据库会话，请求结束时由依赖自动关闭
+    tenant_id: TenantDep,  # 当前租户 ID，用于多租户数据隔离
     # 校验「供应商查询」权限；本函数用不到用户对象，故用下划线命名
     _: Annotated[SysUser, Depends(require_perm("base:supplier:list"))],
     # 返回统一响应，data 为分页结构（total、page、page_size、items）
@@ -60,7 +61,7 @@ async def list_suppliers(  # 分页查询供应商列表的处理函数
     :raises AppException: 无 base:supplier:list 权限时由依赖抛出。
     """
     # 调用业务层执行查询，Router 不直接碰数据库
-    result = await SupplierService(db).list_suppliers(query)
+    result = await SupplierService(db, tenant_id=tenant_id).list_suppliers(query)
     # 包装成 {code: 0, message: "success", data: ...} 返回前端
     return success_response(result)
 
@@ -70,6 +71,7 @@ async def list_suppliers(  # 分页查询供应商列表的处理函数
 @router.get("/suppliers/options", summary="可选供应商列表")
 async def list_selectable_suppliers(  # 返回启用状态供应商的处理函数
     db: DbDep,  # 注入本次请求的异步数据库会话
+    tenant_id: TenantDep,  # 当前租户 ID，用于多租户数据隔离
     # 复用供应商列表权限；停用供应商不出现在结果中
     _: Annotated[SysUser, Depends(require_perm("base:supplier:list"))],
     # 返回统一响应，data 为供应商数组
@@ -84,7 +86,7 @@ async def list_selectable_suppliers(  # 返回启用状态供应商的处理函�
     :raises AppException: 无 base:supplier:list 权限时由依赖抛出。
     """
     # 业务层按状态过滤并补齐应付余额
-    result = await SupplierService(db).list_selectable_suppliers()
+    result = await SupplierService(db, tenant_id=tenant_id).list_selectable_suppliers()
     return success_response(result)  # 按统一格式返回可选项
 
 
@@ -93,6 +95,7 @@ async def list_selectable_suppliers(  # 返回启用状态供应商的处理函�
 async def create_supplier(  # 新增供应商的处理函数
     payload: SupplierCreate,  # 请求体，按 SupplierCreate 模型做必填项与格式校验
     db: DbDep,  # 注入本次请求的异步数据库会话
+    tenant_id: TenantDep,  # 当前租户 ID，用于多租户数据隔离
     # 校验「供应商新增」权限，并拿到当前登录用户
     current_user: Annotated[SysUser, Depends(require_perm("base:supplier:add"))],
     # 返回统一响应，data 为新建成功的供应商详情
@@ -106,7 +109,7 @@ async def create_supplier(  # 新增供应商的处理函数
     :raises AppException: 无权限、编码重复、账期为负等业务异常。
     """
     # 业务层负责查重、落库并回写审计字段
-    result = await SupplierService(db).create_supplier(payload, current_user.id)
+    result = await SupplierService(db, tenant_id=tenant_id).create_supplier(payload, current_user.id)
     return success_response(result)  # 按统一格式返回创建结果
 
 
@@ -115,6 +118,7 @@ async def create_supplier(  # 新增供应商的处理函数
 async def get_supplier(  # 查询单个供应商详情的处理函数
     supplier_id: int,  # 路径中的供应商主键，FastAPI 会自动转换成 int 并校验类型
     db: DbDep,  # 注入本次请求的异步数据库会话
+    tenant_id: TenantDep,  # 当前租户 ID，用于多租户数据隔离
     # 详情与列表同属查询场景，复用 list 权限码
     _: Annotated[SysUser, Depends(require_perm("base:supplier:list"))],
     # 返回统一响应，data 为供应商详情
@@ -127,7 +131,7 @@ async def get_supplier(  # 查询单个供应商详情的处理函数
     :raises AppException: 无权限或记录不存在（已删除）时抛出。
     """
     # 业务层按主键查询，并过滤已软删除的数据
-    result = await SupplierService(db).get_supplier(supplier_id)
+    result = await SupplierService(db, tenant_id=tenant_id).get_supplier(supplier_id)
     return success_response(result)  # 按统一格式返回详情
 
 
@@ -137,6 +141,7 @@ async def update_supplier(  # 修改供应商的处理函数
     supplier_id: int,  # 要修改的供应商主键
     payload: SupplierUpdate,  # 请求体，字段均可选，只更新前端传过来的字段
     db: DbDep,  # 注入本次请求的异步数据库会话
+    tenant_id: TenantDep,  # 当前租户 ID，用于多租户数据隔离
     # 校验「供应商修改」权限，并拿到当前登录用户
     current_user: Annotated[SysUser, Depends(require_perm("base:supplier:edit"))],
     # 返回统一响应，data 为修改后的供应商详情
@@ -151,7 +156,7 @@ async def update_supplier(  # 修改供应商的处理函数
     :raises AppException: 无权限、记录不存在、编码冲突、账期为负等业务异常。
     """
     # 业务层负责校验与落库，并记录修改人
-    result = await SupplierService(db).update_supplier(supplier_id, payload, current_user.id)
+    result = await SupplierService(db, tenant_id=tenant_id).update_supplier(supplier_id, payload, current_user.id)
     return success_response(result)  # 按统一格式返回修改后的详情
 
 
@@ -160,6 +165,7 @@ async def update_supplier(  # 修改供应商的处理函数
 async def delete_supplier(  # 删除供应商的处理函数
     supplier_id: int,  # 要删除的供应商主键
     db: DbDep,  # 注入本次请求的异步数据库会话
+    tenant_id: TenantDep,  # 当前租户 ID，用于多租户数据隔离
     # 校验「供应商删除」权限，并拿到当前登录用户
     current_user: Annotated[SysUser, Depends(require_perm("base:supplier:delete"))],
     # 删除无业务数据返回，data 固定为 null
@@ -173,6 +179,6 @@ async def delete_supplier(  # 删除供应商的处理函数
     :raises AppException: 无权限、记录不存在或存在单据引用时抛出。
     """
     # 业务层执行删除并处理关联校验，无需返回数据
-    await SupplierService(db).delete_supplier(supplier_id, current_user.id)
+    await SupplierService(db, tenant_id=tenant_id).delete_supplier(supplier_id, current_user.id)
     # 成功时 data 为 null，前端只需判断 code 是否为 0
     return success_response(None)
