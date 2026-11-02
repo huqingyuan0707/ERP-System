@@ -224,6 +224,7 @@ class UserService:
         """
         await self.oper_logs.add(
             SysOperLog(
+                tenant_id=self.tenant_id,
                 user_id=operator_id,
                 module=OPER_MODULE,
                 action=action,

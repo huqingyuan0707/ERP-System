@@ -39,6 +39,11 @@ class ConfigService:
     async def batch_update(self, items: list[ConfigUpdateItem]) -> list[SysConfig]:
         """批量保存参数；billno.* 键校验单号规则格式，保存后失效缓存。"""
         for item in items:
+            if item.key == "sales.credit.mode" and item.value not in {"block", "warn", "off"}:
+                raise AppException(
+                    ErrorCode.VALIDATION_ERROR,
+                    "sales.credit.mode 仅支持 block、warn、off",
+                )
             if item.key.startswith(BILLNO_KEY_PREFIX):
                 parse_billno_rule(item.value, item.key.removeprefix(BILLNO_KEY_PREFIX))
         updated: list[SysConfig] = []

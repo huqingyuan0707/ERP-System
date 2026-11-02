@@ -1,11 +1,9 @@
 """客户业务逻辑：编码、信用额度、应收余额、引用保护与操作日志。
 
-信用额度参与销售订单审核：assert_within_credit 供订单审核调用，
-已发生未收金额 + 本次订单金额超过信用额度时拒绝。账期决定应收到期日：
-calculate_due_date 按出库日期 + 账期推算。删除前检查销售订单/出库/应收引用。
+提供信用额度校验与账期计算 helper，销售单据调用链留待对应模块接入。
+信用额度 0 表示不限；有限额度按系统 block/warn/off 策略处理。
 """
 
-import json
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -13,17 +11,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException, ErrorCode
 from app.models.base_data import BdCustomer
-from app.models.sys import SysOperLog
 from app.repositories.customer import CustomerRepository
-from app.repositories.oper_log import OperLogRepository
 from app.schemas.common import PageResult
 from app.schemas.customer import (
     CustomerCreate,
+    CustomerCreditCheckOut,
     CustomerCreditOut,
     CustomerOut,
     CustomerQuery,
     CustomerUpdate,
 )
+from app.services.audit import write_oper_log
+from app.services.config import ConfigService
 from app.utils.code_gen import format_code, next_seq_from_code
 from app.utils.pagination import paginate_result
 
@@ -39,7 +38,6 @@ class CustomerService:
         self.db = db
         self.tenant_id = tenant_id
         self.customers = CustomerRepository(db, tenant_id=tenant_id)
-        self.oper_logs = OperLogRepository(db)
 
     async def list_customers(self, query: CustomerQuery) -> PageResult[CustomerOut]:
         """按 query 返回未删除客户分页结果；应收余额批量汇总。"""
@@ -71,7 +69,7 @@ class CustomerService:
         ]
 
     async def create_customer(
-        self, payload: CustomerCreate, current_user_id: int
+        self, payload: CustomerCreate, current_user_id: int, *, commit: bool = True
     ) -> CustomerOut:
         """用 payload 新建客户并记录 current_user_id；返回详情，编码重复抛 409。"""
         try:
@@ -88,6 +86,7 @@ class CustomerService:
                 name=name,
                 contact=payload.contact,
                 phone=payload.phone,
+                address=payload.address,
                 tax_no=payload.tax_no,
                 bank=payload.bank,
                 account=payload.account,
@@ -102,14 +101,21 @@ class CustomerService:
             await self.customers.add(customer)
             await self._write_log(current_user_id, "新增客户", customer.id)
             result = await self._to_out(customer)
-            await self.db.commit()
+            if commit:
+                await self.db.commit()
             return result
         except Exception:
-            await self.db.rollback()
+            if commit:
+                await self.db.rollback()
             raise
 
     async def update_customer(
-        self, customer_id: int, payload: CustomerUpdate, current_user_id: int
+        self,
+        customer_id: int,
+        payload: CustomerUpdate,
+        current_user_id: int,
+        *,
+        commit: bool = True,
     ) -> CustomerOut:
         """将 payload 的已传字段更新到 customer_id，记录 current_user_id 后返回详情。
 
@@ -120,7 +126,7 @@ class CustomerService:
             await self.customers.lock_for_write()
             customer = await self._get_active_customer(customer_id, for_update=True)
             data: dict = payload.model_dump(exclude_unset=True)
-            for field in ("code", "name"):
+            for field in ("code", "name", "credit_limit", "credit_days", "status"):
                 if field in data and data[field] is None:
                     raise AppException(ErrorCode.VALIDATION_ERROR, f"{field} 不能为 null")
             for field in ("code", "name"):
@@ -144,13 +150,17 @@ class CustomerService:
             customer.updated_by = current_user_id
             await self._write_log(current_user_id, action, customer.id)
             result = await self._to_out(customer)
-            await self.db.commit()
+            if commit:
+                await self.db.commit()
             return result
         except Exception:
-            await self.db.rollback()
+            if commit:
+                await self.db.rollback()
             raise
 
-    async def delete_customer(self, customer_id: int, current_user_id: int) -> None:
+    async def delete_customer(
+        self, customer_id: int, current_user_id: int, *, commit: bool = True
+    ) -> None:
         """删除 customer_id 并记录 current_user_id，无返回值。
 
         客户不存在抛 404；存在未结销售订单、销售出库单或应收记录时抛 409。
@@ -162,45 +172,65 @@ class CustomerService:
             customer.is_deleted = True
             customer.updated_by = current_user_id
             await self._write_log(current_user_id, "删除客户", customer.id)
-            await self.db.commit()
+            if commit:
+                await self.db.commit()
         except Exception:
-            await self.db.rollback()
+            if commit:
+                await self.db.rollback()
             raise
 
     async def calculate_due_date(self, customer_id: int, bill_date: date) -> date:
-        """按客户账期计算应收到期日，供销售出库单据生成时调用。
+        """按客户账期计算应收到期日，保留纯 helper，销售出库单据调用链尚待接入。
 
         账期为 0 时到期日与单据日期相同；停用客户同样可以计算历史单据的到期日。
         """
         customer = await self._get_active_customer(customer_id)
         return bill_date + timedelta(days=customer.credit_days)
 
-    async def assert_within_credit(self, customer_id: int, amount: Decimal) -> None:
-        """销售订单审核时调用：已发生应收 + 本次订单金额超过信用额度则拒绝。
-
-        通过校验不返回任何值；超出时抛 422，订单审核据此阻断。
-        """
-        customer = await self._get_active_customer(customer_id)
-        receivable = (await self.customers.sum_unpaid_receivable([customer_id])).get(
-            customer_id, Decimal("0")
+    async def assert_within_credit(
+        self, customer_id: int, amount: Decimal
+    ) -> CustomerCreditCheckOut:
+        """额度校验 helper；销售模块接入时须展示 warning，当前尚无单据调用链。"""
+        summary = await self.get_credit_summary(customer_id)
+        amount = Decimal(str(amount))
+        if not amount.is_finite() or amount < 0:
+            raise AppException(ErrorCode.VALIDATION_ERROR, "本次金额必须是非负有限数")
+        exceeded = (
+            not summary.unlimited and summary.receivable_amount + amount > summary.credit_limit
         )
-        if receivable + Decimal(str(amount)) > customer.credit_limit:
-            raise AppException(
-                ErrorCode.VALIDATION_ERROR,
-                f"超出客户信用额度：已发生应收 {receivable}，信用额度 {customer.credit_limit}",
+        warning = None
+        if exceeded and summary.mode != "off":
+            message = (
+                f"超出客户信用额度：已发生应收 {summary.receivable_amount}，"
+                f"本次金额 {amount}，信用额度 {summary.credit_limit}"
             )
+            if summary.mode == "block":
+                raise AppException(ErrorCode.VALIDATION_ERROR, message)
+            warning = message
+        return CustomerCreditCheckOut(
+            **summary.model_dump(exclude={"over_limit"}),
+            over_limit=exceeded,
+            allowed=True,
+            warning=warning,
+        )
 
     async def get_credit_summary(self, customer_id: int) -> CustomerCreditOut:
-        """返回客户信用概况：信用额度、应收余额、可用额度、是否超限。"""
+        """0 额度表示不限，可用额度返回 null，避免误报负额度和超限。"""
         customer = await self._get_active_customer(customer_id)
         receivable = (await self.customers.sum_unpaid_receivable([customer_id])).get(
             customer_id, Decimal("0")
         )
+        mode = await ConfigService(self.db).get_value("sales.credit.mode", "block")
+        if mode not in {"block", "warn", "off"}:
+            raise AppException(ErrorCode.VALIDATION_ERROR, "信用额度策略配置无效")
+        unlimited = customer.credit_limit == 0
         return CustomerCreditOut(
             credit_limit=customer.credit_limit,
             receivable_amount=receivable,
-            available_credit=customer.credit_limit - receivable,
-            over_limit=receivable > customer.credit_limit,
+            available_credit=None if unlimited else customer.credit_limit - receivable,
+            unlimited=unlimited,
+            over_limit=not unlimited and receivable > customer.credit_limit,
+            mode=mode,
         )
 
     # ----- 内部辅助 -----
@@ -265,13 +295,11 @@ class CustomerService:
     async def _write_log(self, operator_id: int, action: str, target_id: int) -> None:
         """记录 operator_id 对 target_id 的 action，只写当前事务，不直接提交。"""
         params: dict[str, int] = {"customerId": target_id}
-        await self.oper_logs.add(
-            SysOperLog(
-                user_id=operator_id,
-                module=OPER_MODULE,
-                action=action,
-                params=json.dumps(params, ensure_ascii=False),
-                result="success",
-                status=1,
-            )
+        await write_oper_log(
+            self.db,
+            tenant_id=self.tenant_id,
+            operator_id=operator_id,
+            action=action,
+            params=params,
+            module=OPER_MODULE,
         )

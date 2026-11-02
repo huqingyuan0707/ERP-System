@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /** 异步任务进度抽屉（C-07）：顶栏入口，显示所有导入导出任务进度与下载入口。 */
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { ElButton, ElMessage, ElProgress, ElTag, ElScrollbar } from 'element-plus'
 
-import { downloadExportFile, getTaskList } from '@/api/task'
+import { downloadTaskFile, getTaskList, isTerminalTaskError } from '@/api/task'
 import type { Task } from '@/types/log'
 
 const visible = ref(false)
@@ -12,17 +12,56 @@ const tasks = ref<Task[]>([])
 
 const pendingCount = computed(() => tasks.value.filter((t) => t.status !== 3 && t.status !== 4).length)
 
+let controller: AbortController | null = null
+let timer: ReturnType<typeof setTimeout> | null = null
+let disposed = false
+let failures = 0
+let attempts = 0
+let stopped = false
+
+const clearTimer = (): void => {
+  if (timer) clearTimeout(timer)
+  timer = null
+}
+
 const fetchTasks = async (): Promise<void> => {
+  if (loading.value || disposed || stopped) return
+  clearTimer()
   loading.value = true
+  controller = new AbortController()
+  attempts += 1
   try {
-    const result = await getTaskList({ page: 1, pageSize: 20 })
+    const result = await getTaskList({ page: 1, pageSize: 20 }, controller.signal)
+    if (disposed) return
     tasks.value = result.items
-  } catch {
-    // 忽略
+    failures = 0
+  } catch (error) {
+    if (disposed) return
+    failures += 1
+    if (isTerminalTaskError(error) || failures >= 3) stopped = true
   } finally {
-    loading.value = false
+    if (!disposed) {
+      loading.value = false
+      if (visible.value && !stopped && attempts < 150 && (pendingCount.value > 0 || failures > 0)) {
+        timer = setTimeout(() => void fetchTasks(), 3000)
+      }
+    }
   }
 }
+
+watch(visible, (opened) => {
+  clearTimer()
+  if (opened && !stopped) {
+    attempts = 0
+    void fetchTasks()
+  }
+})
+
+onBeforeUnmount(() => {
+  disposed = true
+  clearTimer()
+  controller?.abort()
+})
 
 const statusLabel = (v: number): string => {
   const map: Record<number, string> = { 1: '待执行', 2: '执行中', 3: '成功', 4: '失败' }
@@ -50,9 +89,8 @@ const taskTypeLabel = (t: string): string => {
 }
 
 const downloadFile = (row: Task): void => {
-  if (!row.filePath) return
-  const fileName = row.filePath.split('/').pop() ?? row.filePath
-  void downloadExportFile(fileName).catch(() => {
+  if (!row.canDownload) return
+  void downloadTaskFile(row).catch(() => {
     ElMessage.error('下载失败')
   })
 }
@@ -62,6 +100,9 @@ onMounted(() => {
 })
 
 const handleRefresh = (): void => {
+  stopped = false
+  failures = 0
+  attempts = 0
   void fetchTasks()
 }
 
@@ -101,7 +142,7 @@ const handleRefresh = (): void => {
         <el-table-column label="操作" width="140" align="center">
           <template #default="{ row }">
             <el-button
-              v-if="row.status === 3 && row.filePath"
+              v-if="row.status === 3 && row.canDownload"
               type="primary"
               size="small"
               :icon="'Download'"

@@ -7,11 +7,12 @@ export interface Customer {
   code: string
   name: string
   contact: string | null
+  address: string | null
   phone: string | null
   taxNo: string | null
   bank: string | null
   account: string | null
-  /** 信用额度。 */
+  /** 信用额度，0 表示不限。 */
   creditLimit: string | number
   /** 账期天数，用于推算应收到期日。 */
   creditDays: number
@@ -27,24 +28,27 @@ export interface CustomerCreatePayload {
   code?: string | null
   name: string
   contact?: string | null
+  address?: string | null
   phone?: string | null
   taxNo?: string | null
   bank?: string | null
   account?: string | null
-  creditLimit?: string | number | null
-  creditDays?: number | null
-  status?: number | null
+  creditLimit?: string | number
+  creditDays?: number
+  status?: number
   remark?: string | null
 }
 
 /** 修改客户请求体（对应后端 CustomerUpdate，部分更新）。 */
-export type CustomerUpdatePayload = Partial<CustomerCreatePayload>
+export type CustomerUpdatePayload = Partial<Omit<CustomerCreatePayload, 'code'>> & { code?: string }
 
 /** 客户信用概况（对应后端 CustomerCreditOut）。 */
 export interface CustomerCredit {
   creditLimit: string | number
   receivableAmount: string | number
-  availableCredit: string | number
+  availableCredit: string | number | null
+  unlimited: boolean
+  mode: 'block' | 'warn' | 'off'
   overLimit: boolean
 }
 

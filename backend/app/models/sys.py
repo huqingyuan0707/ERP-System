@@ -459,6 +459,9 @@ class SysOperLog(TimestampMixin, Base):
     # 映射到表 sys_oper_log
     __tablename__ = "sys_oper_log"
 
+    # 历史记录的租户可能未知；新记录由已认证请求明确填写，不能默认归入租户 1。
+    tenant_id: Mapped[int | None] = mapped_column(BIGINT_PK, index=True)
+
     # 主键：自增，插入时由数据库生成 ID
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
     user_id: Mapped[int | None] = mapped_column(BIGINT_PK, index=True)  # 操作人，可空
@@ -520,6 +523,8 @@ class SysTask(TimestampMixin, Base):
 
     # 映射到表 sys_task
     __tablename__ = "sys_task"
+
+    tenant_id: Mapped[int | None] = mapped_column(BIGINT_PK, index=True)
 
     # 主键：自增，插入时由数据库生成 ID
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)

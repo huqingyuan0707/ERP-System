@@ -56,6 +56,7 @@ export interface Task {
   status: number // 1=待执行，2=执行中，3=成功，4=失败
   params: string | null
   filePath: string | null
+  canDownload: boolean
   errorMsg: string | null
   progress: number
   createdBy: number | null
@@ -74,5 +75,4 @@ export interface TaskQuery {
 export interface TaskCreatePayload {
   taskType: string
   params?: string | null
-  createdBy?: number | null
 }

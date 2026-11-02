@@ -8,21 +8,21 @@
   GET  /api/v1/finance/statements/{id}/export  对账单导出
 """
 
-from pathlib import Path as _Path
 from typing import Annotated
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 
-from app.core.deps import CurrentUserDep, DbDep, require_perm
+from app.core.deps import CurrentUserDep, DbDep, TenantDep, require_perm
 from app.core.exceptions import AppException, ErrorCode
 from app.models.sys import SysUser
-from app.repositories.task import TaskRepository
 from app.schemas.common import ApiResponse, success_response
 from app.schemas.goods import GoodsImportResult, GoodsQuery
 from app.schemas.task import TaskOut
 from app.services.auth import AuthService
-from app.services.excel_export import ExcelExportService
+from app.services.excel_export import EXPORT_DIR, ExcelExportService
+from app.services.task import TaskService
 from app.utils.importer import build_import_template
 
 
@@ -42,14 +42,19 @@ IMPORT_MAX_SIZE = 5 * 1024 * 1024
 async def import_goods(
     db: DbDep,
     current_user: CurrentUserDep,
+    tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm(IMPORT_GOODS_PERM))],
     file: UploadFile = File(..., description="Excel 文件"),
 ) -> ApiResponse[GoodsImportResult]:
     """上传商品 Excel，逐行校验，全部成功才入库，失败返回逐行错误报告。"""
-    content = await file.read()
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise AppException(
+            ErrorCode.BAD_REQUEST, "仅支持 .xlsx 文件，请将 .xls 另存为 .xlsx 后上传"
+        )
+    content = await file.read(IMPORT_MAX_SIZE + 1)
     if len(content) > IMPORT_MAX_SIZE:
         raise AppException(ErrorCode.BAD_REQUEST, "文件大小不能超过 5MB")
-    result = await ExcelExportService(db).import_goods(content, current_user.id)
+    result = await ExcelExportService(db, tenant_id).import_goods(content, current_user.id)
     return success_response(result)
 
 
@@ -57,11 +62,12 @@ async def import_goods(
 async def export_goods(
     db: DbDep,
     current_user: CurrentUserDep,
+    tenant_id: TenantDep,
     query: Annotated[GoodsQuery, Query()],
     _: Annotated[SysUser, Depends(require_perm(EXPORT_GOODS_PERM))],
 ) -> ApiResponse[TaskOut]:
     """商品导出：按当前筛选条件提交异步任务，返回 taskId，前端轮询 /sys/tasks/{taskId}。"""
-    task = await ExcelExportService(db).export_goods(
+    task = await ExcelExportService(db, tenant_id).export_goods(
         created_by=current_user.id,
         query=query,
     )
@@ -72,12 +78,13 @@ async def export_goods(
 async def export_stocks(
     db: DbDep,
     current_user: CurrentUserDep,
+    tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm(EXPORT_STOCK_PERM))],
     warehouse_id: int | None = Query(default=None),
     keyword: str | None = Query(default=None),
 ) -> ApiResponse[TaskOut]:
     """库存导出：提交异步任务，返回 taskId。"""
-    task = await ExcelExportService(db).export_stocks(
+    task = await ExcelExportService(db, tenant_id).export_stocks(
         created_by=current_user.id,
         warehouse_id=warehouse_id,
         keyword=keyword,
@@ -89,28 +96,28 @@ async def export_stocks(
 async def export_report(
     db: DbDep,
     current_user: CurrentUserDep,
+    tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))],
     report_type: str = Query(..., description="报表类型 purchase/sales/inventory/finance"),
 ) -> ApiResponse[TaskOut]:
     """通用报表导出：提交异步任务，返回 taskId。"""
-    task = await ExcelExportService(db).export_report(
+    task = await ExcelExportService(db, tenant_id).export_report(
         created_by=current_user.id,
         report_type=report_type,
     )
     return success_response(task)
 
 
-@router.get(
-    "/finance/statements/{statement_id}/export", summary="对账单导出"
-)
+@router.get("/finance/statements/{statement_id}/export", summary="对账单导出")
 async def export_statement(
     statement_id: int,
     db: DbDep,
     current_user: CurrentUserDep,
+    tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))],
 ) -> ApiResponse[TaskOut]:
     """对账单导出：提交异步任务，返回 taskId。"""
-    task = await ExcelExportService(db).export_statement(
+    task = await ExcelExportService(db, tenant_id).export_statement(
         created_by=current_user.id,
         statement_id=statement_id,
     )
@@ -121,32 +128,20 @@ async def export_statement(
 async def download_export(
     db: DbDep,
     current_user: CurrentUserDep,
+    tenant_id: TenantDep,
     fileName: str = Query(..., description="导出文件名"),
 ):
-    """下载已生成的导出 Excel 文件。
-
-    不再统一要求 report:export：商品/库存等各模块的导出人应能下载自己的文件；
-    通过任务记录校验归属，只有具备 report:export 或 * 权限的用户可下载他人文件。
-    """
-    # 防止目录遍历攻击：只允许纯文件名，不允许路径分隔符
-    if "/" in fileName or "\\" in fileName or ".." in fileName:
-        raise AppException(ErrorCode.BAD_REQUEST, "非法文件名")
-    task = await TaskRepository(db).get_by_file_name(fileName)
-    if task is None:
-        raise AppException(ErrorCode.NOT_FOUND, "文件不存在或已过期")
+    """兼容旧文件名入口；与 taskId 下载使用同一租户/owner 权限策略。"""
     codes = await AuthService(db).get_permission_codes(current_user.id)
-    if (
-        "*" not in codes
-        and EXPORT_REPORT_PERM not in codes
-        and task.created_by != current_user.id
-    ):
-        raise AppException(ErrorCode.FORBIDDEN, "无权下载该导出文件")
-    file_path = _Path("exports") / fileName
-    if not file_path.exists():
-        raise AppException(ErrorCode.NOT_FOUND, "文件不存在或已过期")
+    file_path = await TaskService(db, tenant_id).download_path(
+        user_id=current_user.id,
+        codes=codes,
+        export_dir=EXPORT_DIR,
+        file_name=fileName,
+    )
     return FileResponse(
-        path=str(file_path),
-        filename=fileName,
+        path=file_path,
+        filename=file_path.name,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
@@ -166,6 +161,6 @@ async def download_goods_template(
         content=content,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
-            "Content-Disposition": 'attachment; filename="商品导入模板.xlsx"',
+            "Content-Disposition": "attachment; filename*=UTF-8''" + quote("商品导入模板.xlsx"),
         },
     )

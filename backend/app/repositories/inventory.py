@@ -5,6 +5,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.base_data import BdGoods, BdUnit, BdWarehouse
 from app.models.inventory import InvStock, InvStockFlow
 
 
@@ -18,9 +19,43 @@ class InventoryRepository:
         self._db = db
         self.tenant_id = tenant_id
 
-    async def get_stock_for_update(
-        self, warehouse_id: int, goods_id: int
-    ) -> InvStock | None:
+    async def get_warehouse_for_update(self, warehouse_id: int) -> BdWarehouse | None:
+        return await self._db.scalar(
+            select(BdWarehouse)
+            .where(
+                BdWarehouse.id == warehouse_id,
+                BdWarehouse.tenant_id == self.tenant_id,
+                BdWarehouse.is_deleted.is_(False),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+    async def get_goods_for_update(self, goods_id: int) -> BdGoods | None:
+        return await self._db.scalar(
+            select(BdGoods)
+            .where(
+                BdGoods.id == goods_id,
+                BdGoods.tenant_id == self.tenant_id,
+                BdGoods.is_deleted.is_(False),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+    async def get_unit_for_update(self, unit_id: int) -> BdUnit | None:
+        return await self._db.scalar(
+            select(BdUnit)
+            .where(
+                BdUnit.id == unit_id,
+                BdUnit.tenant_id == self.tenant_id,
+                BdUnit.is_deleted.is_(False),
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+
+    async def get_stock_for_update(self, warehouse_id: int, goods_id: int) -> InvStock | None:
         """按仓库+商品查询库存行并加行级锁（SELECT FOR UPDATE）。
 
         事务内执行，锁定该行直到 commit/rollback，防止并发超卖。
@@ -35,12 +70,11 @@ class InventoryRepository:
                 InvStock.is_deleted.is_(False),
             )
             .with_for_update()  # PostgreSQL 行级锁
+            .execution_options(populate_existing=True)  # 获锁后读取最新数量，避免会话旧值。
         )
         return await self._db.scalar(stmt)
 
-    async def create_stock(
-        self, warehouse_id: int, goods_id: int
-    ) -> InvStock:
+    async def create_stock(self, warehouse_id: int, goods_id: int) -> InvStock:
         """若库存行不存在则创建（初始全为 0）。"""
         entity = InvStock(
             tenant_id=self.tenant_id,  # 写入当前租户 ID，确保多租户隔离

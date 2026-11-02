@@ -10,13 +10,14 @@
 """
 
 import asyncio
+import json
 import uuid
 from collections.abc import AsyncIterator, Coroutine
 from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 
 from app.db.session import AsyncSessionLocal
 from app.main import app
@@ -98,6 +99,16 @@ def test_warehouse_b03_rules() -> None:
 async def _scenario() -> None:
     suffix = uuid.uuid4().hex[:8]
     created_ids: list[int] = []
+    async with AsyncSessionLocal() as session:
+        original_defaults = list(
+            (
+                await session.scalars(
+                    select(BdWarehouse.id).where(
+                        BdWarehouse.tenant_id == 1, BdWarehouse.is_default.is_(True)
+                    )
+                )
+            ).all()
+        )
     try:
         async with _client() as client:
             token = await _login_token(client, *ADMIN)
@@ -295,9 +306,7 @@ async def _scenario() -> None:
             # 所以这里用 ORM 直接判断 is_deleted。
             async with AsyncSessionLocal() as session:
                 orm = (
-                    await session.execute(
-                        select(BdWarehouse).where(BdWarehouse.code == code_f)
-                    )
+                    await session.execute(select(BdWarehouse).where(BdWarehouse.code == code_f))
                 ).scalar_one()
                 assert orm.is_deleted is True, "删除应为软删"
 
@@ -306,15 +315,23 @@ async def _scenario() -> None:
             # ------------------------------------------------------------------
             async with AsyncSessionLocal() as session:
                 logs = (
-                    await session.execute(
-                        select(SysOperLog).where(
-                            SysOperLog.module == "基础资料",
-                            SysOperLog.action.in_(
-                                ["新增仓库", "修改仓库", "切换默认仓"]
-                            ),
+                    (
+                        await session.execute(
+                            select(SysOperLog).where(
+                                SysOperLog.module == "基础资料",
+                                SysOperLog.action.in_(["新增仓库", "修改仓库", "切换默认仓"]),
+                            )
                         )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
+            logs = [
+                log
+                for log in logs
+                if log.tenant_id == 1
+                and json.loads(log.params or "{}").get("warehouseId") in created_ids
+            ]
             actions = {log.action for log in logs}
             assert "新增仓库" in actions, "缺少新增仓库操作日志"
             assert "修改仓库" in actions, "缺少修改仓库操作日志"
@@ -322,3 +339,14 @@ async def _scenario() -> None:
 
     finally:
         await _cleanup(created_ids)
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                update(BdWarehouse).where(BdWarehouse.tenant_id == 1).values(is_default=False)
+            )
+            if original_defaults:
+                await session.execute(
+                    update(BdWarehouse)
+                    .where(BdWarehouse.id.in_(original_defaults))
+                    .values(is_default=True)
+                )
+            await session.commit()

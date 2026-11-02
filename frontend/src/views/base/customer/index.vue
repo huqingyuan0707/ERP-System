@@ -7,7 +7,7 @@
  *   - 删除前检查销售订单/出库/应收引用，有引用返回 409；
  *   - 停用后不出现在新单据的可选列表，历史单据仍可正常显示；
  *   - 应收余额为应收单据未核销金额汇总，账期决定应收到期日；
- *   - creditLimit 参与订单审核（已发生应收 + 本次金额超额度则阻断）。
+ *   - 额度0不限；block/warn/off 策略已提供，销售单据调用链待接入。
  */
 import { nextTick, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -81,7 +81,7 @@ const formatAmount = (value: string | number | null | undefined): string => {
 
 /** 是否超出信用额度：应收余额 > 信用额度时高亮告警。 */
 const isOverLimit = (row: Customer): boolean =>
-  Number(row.receivableAmount ?? 0) > Number(row.creditLimit ?? 0)
+  Number(row.creditLimit) > 0 && Number(row.receivableAmount ?? 0) > Number(row.creditLimit)
 
 // ---------- 客户表单 ----------
 
@@ -95,6 +95,7 @@ interface CustomerForm {
   code: string
   name: string
   contact: string
+  address: string
   phone: string
   taxNo: string
   bank: string
@@ -109,6 +110,7 @@ const createEmptyForm = (): CustomerForm => ({
   code: '',
   name: '',
   contact: '',
+  address: '',
   phone: '',
   taxNo: '',
   bank: '',
@@ -149,6 +151,7 @@ const openEdit = (row: Customer): void => {
     code: row.code,
     name: row.name,
     contact: row.contact ?? '',
+    address: row.address ?? '',
     phone: row.phone ?? '',
     taxNo: row.taxNo ?? '',
     bank: row.bank ?? '',
@@ -172,6 +175,7 @@ const handleSubmit = async (): Promise<void> => {
       code: form.code || null,
       name: form.name.trim(),
       contact: form.contact.trim() || null,
+      address: form.address.trim() || null,
       phone: form.phone.trim() || null,
       taxNo: form.taxNo.trim() || null,
       bank: form.bank.trim() || null,
@@ -185,7 +189,7 @@ const handleSubmit = async (): Promise<void> => {
       await createCustomer(payload)
       ElMessage.success('新增成功')
     } else if (editingId.value !== null) {
-      await updateCustomer(editingId.value, payload)
+      await updateCustomer(editingId.value, { ...payload, code: form.code })
       ElMessage.success('修改成功')
     }
     dialogVisible.value = false
@@ -307,12 +311,14 @@ onMounted(() => {
             <el-table-column prop="phone" label="电话" width="130">
               <template #default="{ row }">{{ row.phone || '-' }}</template>
             </el-table-column>
+            <el-table-column prop="address" label="地址" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
             <el-table-column prop="taxNo" label="税号" width="150">
               <template #default="{ row }">{{ row.taxNo || '-' }}</template>
             </el-table-column>
             <el-table-column label="信用额度" width="120" align="right">
               <template #default="{ row }">
-                <span class="credit-limit">￥{{ formatAmount(row.creditLimit) }}</span>
+                <span class="credit-limit">{{ Number(row.creditLimit) === 0 ? '不限' : `￥${formatAmount(row.creditLimit)}` }}</span>
               </template>
             </el-table-column>
             <el-table-column label="账期" width="90" align="center">
@@ -331,12 +337,15 @@ onMounted(() => {
             <el-table-column label="状态" width="90" align="center">
               <template #default="{ row }">
                 <el-switch
-                  v-perm="'base:customer:edit'"
+                  v-if="userStore.hasPerm('base:customer:edit')"
                   :model-value="row.status"
                   :active-value="1"
                   :inactive-value="0"
                   @change="handleStatusChange(row, $event)"
                 />
+                <el-tag v-else :type="row.status === 1 ? 'success' : 'info'" size="small">
+                  {{ row.status === 1 ? '启用' : '停用' }}
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="200" fixed="right" align="center">
@@ -440,7 +449,7 @@ onMounted(() => {
                 controls-position="right"
                 class="full"
               />
-              <div class="form-tip">信用额度参与订单审核：已发生应收 + 本次订单金额超额度时阻断。</div>
+              <div class="form-tip">0 表示不限。有限额度按系统策略阻断/警告/关闭校验；销售单据调用链待接入。</div>
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -458,6 +467,11 @@ onMounted(() => {
           </el-col>
           <el-col :span="24">
             <el-form-item label="地址">
+              <el-input v-model="form.address" type="textarea" :rows="3" maxlength="255" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="备注">
               <el-input v-model="form.remark" type="textarea" :rows="3" maxlength="255" />
             </el-form-item>
           </el-col>
@@ -488,7 +502,7 @@ onMounted(() => {
           {{ currentCustomer.name }}
         </el-descriptions-item>
         <el-descriptions-item label="信用额度">
-          <span class="credit-limit">￥{{ formatAmount(creditInfo?.creditLimit ?? 0) }}</span>
+          <span class="credit-limit">{{ !creditInfo ? '加载中' : creditInfo.unlimited ? '不限' : `￥${formatAmount(creditInfo.creditLimit)}` }}</span>
         </el-descriptions-item>
         <el-descriptions-item label="应收余额">
           <span class="receivable-amount">
@@ -497,13 +511,16 @@ onMounted(() => {
         </el-descriptions-item>
         <el-descriptions-item label="可用额度">
           <span :class="(creditInfo?.overLimit ?? false) ? 'over-limit' : 'receivable-amount'">
-            ￥{{ formatAmount(creditInfo?.availableCredit ?? 0) }}
+            {{ !creditInfo ? '加载中' : creditInfo.unlimited ? '不限' : `￥${formatAmount(creditInfo.availableCredit)}` }}
           </span>
         </el-descriptions-item>
         <el-descriptions-item label="是否超限">
           <el-tag :type="(creditInfo?.overLimit ?? false) ? 'danger' : 'success'">
             {{ (creditInfo?.overLimit ?? false) ? '已超限' : '正常' }}
           </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="超额策略">
+          {{ !creditInfo ? '加载中' : { block: '阻断', warn: '警告', off: '关闭校验' }[creditInfo.mode] }}
         </el-descriptions-item>
         <el-descriptions-item label="到期日规则">
           出库日期 + 账期天数 = 应收到期日
@@ -515,7 +532,7 @@ onMounted(() => {
         class="credit-tip"
         type="error"
         :closable="false"
-        title="该客户已超出信用额度，新销售订单审核将被阻断。"
+        :title="creditInfo?.mode === 'block' ? '该客户已超限，策略为阻断；销售单据接入额度校验后生效。' : creditInfo?.mode === 'warn' ? '该客户已超限，策略为警告，不阻断；销售单据接入待验收。' : '该客户已超限，但系统已关闭额度阻断。'"
       />
       <el-alert
         v-else

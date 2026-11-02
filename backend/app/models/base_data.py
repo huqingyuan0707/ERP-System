@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, Numeric, String
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -23,6 +23,14 @@ class BdGoodsCategory(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, 
     __table_args__ = (
         # 同一租户下同级分类名称唯一
         Index("uq_goods_category_name_tenant", "name", "parent_id", "tenant_id", unique=True),
+        Index(
+            "uq_goods_category_root_name_tenant",
+            "name",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("parent_id IS NULL"),
+            sqlite_where=text("parent_id IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
@@ -54,6 +62,14 @@ class BdGoods(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantMi
     __table_args__ = (
         # 同一租户下商品编码唯一
         Index("uq_goods_code_tenant", "code", "tenant_id", unique=True),
+        Index(
+            "uq_goods_barcode_active_tenant",
+            "barcode",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("is_deleted IS FALSE AND barcode IS NOT NULL AND barcode <> ''"),
+            sqlite_where=text("is_deleted IS FALSE AND barcode IS NOT NULL AND barcode <> ''"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)

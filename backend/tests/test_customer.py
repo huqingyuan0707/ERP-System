@@ -2,14 +2,15 @@
 
 覆盖：
   - 新增：编码重复 409；信用额度/账期为负 422；
-  - 信用额度参与订单审核：已发生应收 + 本次金额超额度时 assert_within_credit 拒绝；
-  - 停用后新单据不可选（options 不含停用客户）；
+  - 信用额度校验 helper：已发生应收 + 本次金额超额度时拒绝；不代表销售审核已接入；
+  - 停用选项过滤（options 不含停用客户）；实际新单据选择待销售模块联验；
   - 删除前检查销售订单/出库/应收引用，有引用返回 409；无引用可软删；
   - 账期决定应收到期日：calculate_due_date = 出库日期 + 账期；
   - 操作日志：新增/修改/停用/启用/删除均写入 sys_oper_log。
 """
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from datetime import date
 from decimal import Decimal
@@ -42,9 +43,7 @@ async def _client():
 
 
 async def _login_token(client, username, password):
-    resp = await client.post(
-        f"{API}/auth/login", json={"username": username, "password": password}
-    )
+    resp = await client.post(f"{API}/auth/login", json={"username": username, "password": password})
     assert resp.status_code == 200, resp.text
     return str(resp.json()["data"]["accessToken"])
 
@@ -69,12 +68,8 @@ async def _cleanup(customer_ids):
     if not customer_ids:
         return
     async with AsyncSessionLocal() as session:
-        await session.execute(
-            delete(ArApRecord).where(ArApRecord.partner_id.in_(customer_ids))
-        )
-        await session.execute(
-            delete(BdCustomer).where(BdCustomer.id.in_(customer_ids))
-        )
+        await session.execute(delete(ArApRecord).where(ArApRecord.partner_id.in_(customer_ids)))
+        await session.execute(delete(BdCustomer).where(BdCustomer.id.in_(customer_ids)))
         await session.commit()
 
 
@@ -130,8 +125,12 @@ async def _scenario():
             resp = await _create_customer(
                 client,
                 token,
-                {"code": f"CUS_TEST_{suffix}_NEG", "name": f"负额度{suffix}",
-                 "creditLimit": -1, "status": 1},
+                {
+                    "code": f"CUS_TEST_{suffix}_NEG",
+                    "name": f"负额度{suffix}",
+                    "creditLimit": -1,
+                    "status": 1,
+                },
             )
             assert resp.status_code == 422, resp.text
 
@@ -141,8 +140,13 @@ async def _scenario():
             resp = await _create_customer(
                 client,
                 token,
-                {"code": f"CUS_TEST_{suffix}_NEGD", "name": f"负账期{suffix}",
-                 "creditLimit": 0, "creditDays": -1, "status": 1},
+                {
+                    "code": f"CUS_TEST_{suffix}_NEGD",
+                    "name": f"负账期{suffix}",
+                    "creditLimit": 0,
+                    "creditDays": -1,
+                    "status": 1,
+                },
             )
             assert resp.status_code == 422, resp.text
 
@@ -155,9 +159,7 @@ async def _scenario():
                 json={"status": 0},
             )
             assert resp.status_code == 200, resp.text
-            resp = await client.get(
-                f"{API}/base/customers/options", headers=headers
-            )
+            resp = await client.get(f"{API}/base/customers/options", headers=headers)
             assert resp.status_code == 200, resp.text
             option_ids = [item["id"] for item in resp.json()["data"]]
             assert customer_a["id"] not in option_ids, "停用客户不应出现在可选列表"
@@ -189,22 +191,16 @@ async def _scenario():
                 )
                 await session.commit()
 
-            resp = await client.delete(
-                f"{API}/base/customers/{customer_a['id']}", headers=headers
-            )
+            resp = await client.delete(f"{API}/base/customers/{customer_a['id']}", headers=headers)
             assert resp.status_code == 409, resp.text
 
             # 移除应收记录后再次删除，应成功软删
             async with AsyncSessionLocal() as session:
                 await session.execute(
-                    delete(ArApRecord).where(
-                        ArApRecord.partner_id == customer_a["id"]
-                    )
+                    delete(ArApRecord).where(ArApRecord.partner_id == customer_a["id"])
                 )
                 await session.commit()
-            resp = await client.delete(
-                f"{API}/base/customers/{customer_a['id']}", headers=headers
-            )
+            resp = await client.delete(f"{API}/base/customers/{customer_a['id']}", headers=headers)
             assert resp.status_code == 200, resp.text
 
             async with AsyncSessionLocal() as session:
@@ -297,15 +293,25 @@ async def _scenario():
             # ------------------------------------------------------------------
             async with AsyncSessionLocal() as session:
                 logs = (
-                    await session.execute(
-                        select(SysOperLog).where(
-                            SysOperLog.module == "基础资料",
-                            SysOperLog.action.in_(
-                                ["新增客户", "修改客户", "停用客户", "启用客户", "删除客户"]
-                            ),
+                    (
+                        await session.execute(
+                            select(SysOperLog).where(
+                                SysOperLog.module == "基础资料",
+                                SysOperLog.action.in_(
+                                    ["新增客户", "修改客户", "停用客户", "启用客户", "删除客户"]
+                                ),
+                            )
                         )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
+            logs = [
+                log
+                for log in logs
+                if log.tenant_id == 1
+                and json.loads(log.params or "{}").get("customerId") in created_ids
+            ]
             actions = {log.action for log in logs}
             for expected in ("新增客户", "修改客户", "停用客户", "启用客户", "删除客户"):
                 assert expected in actions, f"缺少操作日志：{expected}"

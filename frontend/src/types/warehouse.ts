@@ -14,7 +14,6 @@ export interface Warehouse {
   status: number
   remark: string | null
   createdAt: string | null
-  updatedAt: string | null
 }
 
 /** 新增仓库请求体（对应后端 WarehouseCreate，部分字段可选）。 */
@@ -29,7 +28,7 @@ export interface WarehouseCreatePayload {
 }
 
 /** 修改仓库请求体（对应后端 WarehouseUpdate，部分更新，仅传需要变更的字段）。 */
-export type WarehouseUpdatePayload = Partial<WarehouseCreatePayload>
+export type WarehouseUpdatePayload = Partial<Omit<WarehouseCreatePayload, 'code'>> & { code?: string }
 
 /** 仓库列表查询参数（对应后端 WarehouseQuery）。 */
 export interface WarehouseQuery extends PageQuery {
@@ -37,7 +36,7 @@ export interface WarehouseQuery extends PageQuery {
   status?: number | null
 }
 
-/** 可选负责人选项（用于下拉框，从用户列表派生）。 */
+/** 可选负责人选项（用于下拉框，仓库专用接口，暂用用户，员工待 B06）。 */
 export interface ManagerOption {
   value: number
   label: string

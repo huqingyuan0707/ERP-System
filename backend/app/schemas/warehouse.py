@@ -65,7 +65,15 @@ class WarehouseOut(BaseModel):  # 定义对外返回的数据结构，不直接�
     is_default: bool = False  # 返回默认仓标记；来源缺少该属性时使用 False，不会修改数据库。
     address: str | None = None  # 返回仓库地址；None 在 JSON 中序列化为 null。
     status: int = 1  # 返回仓库状态；来源缺少该属性时默认 1，此处未设置 0/1 范围校验。
+    remark: str | None = None
     created_at: datetime | None = None  # JSON 模式输出时间字符串；不会自动填入当前时间。
+
+
+class WarehouseManagerOption(BaseModel):
+    """兼容 sys_user 外键的负责人选项；员工档案集成留待 B06。"""
+
+    value: int
+    label: str
 
 
 class WarehouseQuery(PageQuery):  # 继承 page、page_size、keyword，以及父类的 camelCase 别名配置。

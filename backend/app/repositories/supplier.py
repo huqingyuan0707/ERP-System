@@ -9,6 +9,7 @@ from sqlalchemy import (  # 查询类型、绑定参数与读写语句。
     select,
     text,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base_data import BdSupplier  # 供应商表 bd_supplier 的 ORM 模型。
 from app.models.finance import ArApRecord  # 应收应付记录 fin_ar_ap，用于应付引用与余额。
@@ -110,7 +111,9 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
             )  # 将关键字条件附加到查询语句。
         if query.status is not None:  # 0 表示停用，不能用 if query.status 判断。
             stmt = stmt.where(BdSupplier.status == query.status)  # 精确匹配状态。
-        return stmt.order_by(BdSupplier.id.desc())  # ID 倒序；分页复用父类 paginate。
+        return self._apply_tenant_filter(stmt).order_by(
+            BdSupplier.id.desc()
+        )  # ID 倒序；分页复用父类 paginate。
 
     async def list_selectable(self) -> list[BdSupplier]:  # 供采购订单等单据选择供应商。
         """返回启用状态的供应商；停用供应商不会出现在新单据的可选列表中。
@@ -198,6 +201,7 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
         stmt = (
             select(ArApRecord.id)  # 只取主键判断是否存在，不必返回整行。
             .where(ArApRecord.partner_type == PAYABLE_PARTNER_TYPE_SUPPLIER)  # 仅供应商应付。
+            .where(ArApRecord.record_type == 1)  # 应收不得计入应付保护/余额。
             .where(ArApRecord.partner_id == supplier_id)  # 限定当前供应商。
             .where(ArApRecord.status != 4)  # 排除已作废记录。
         )  # 未核销/部分核销/已对账都算存在应付往来。
@@ -223,6 +227,7 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
                 func.coalesce(func.sum(ArApRecord.amount - ArApRecord.reconciled_amount), 0),
             )
             .where(ArApRecord.partner_type == PAYABLE_PARTNER_TYPE_SUPPLIER)  # 仅供应商应付。
+            .where(ArApRecord.record_type == 1)  # 应收不得计入应付保护/余额。
             .where(ArApRecord.partner_id.in_(supplier_ids))  # 只统计当前页涉及的供应商。
             .where(ArApRecord.status != 4)  # 排除已作废记录。
             .group_by(ArApRecord.partner_id)  # 每个供应商一行汇总结果。

@@ -2,6 +2,8 @@
 
 import type { PageQuery } from './common'
 
+export type DecimalValue = string | number
+
 export interface GoodsCategory {
   id: number
   name: string
@@ -49,10 +51,10 @@ export interface Goods {
   unitId: number | null
   unitName: string | null
   barcode: string | null
-  costPrice: number
-  salePrice: number
-  stockLower: number
-  stockUpper: number
+  costPrice: DecimalValue
+  salePrice: DecimalValue
+  stockLower: DecimalValue
+  stockUpper: DecimalValue
   status: number
   remark: string | null
   createdAt: string | null
@@ -66,15 +68,15 @@ export interface GoodsCreatePayload {
   spec?: string | null
   unitId?: number | null
   barcode?: string | null
-  costPrice: number
-  salePrice: number
-  stockLower: number
-  stockUpper: number
+  costPrice: DecimalValue
+  salePrice: DecimalValue
+  stockLower: DecimalValue
+  stockUpper: DecimalValue
   status: number
   remark?: string | null
 }
 
-export type GoodsUpdatePayload = Partial<GoodsCreatePayload>
+export type GoodsUpdatePayload = Partial<Omit<GoodsCreatePayload, 'code'>>
 
 export interface GoodsQuery extends PageQuery {
   categoryId?: number | null

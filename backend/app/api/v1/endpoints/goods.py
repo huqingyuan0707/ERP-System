@@ -4,13 +4,11 @@
 避免同一路径重复注册导致路由被前者遮蔽。
 """
 
-import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 
-from app.core.deps import DbDep, TenantDep, get_redis, require_perm
-from app.core.exceptions import AppException, ErrorCode
+from app.core.deps import DbDep, TenantDep, require_perm
 from app.models.sys import SysUser
 from app.schemas.common import ApiResponse, PageResult, success_response
 from app.schemas.goods import (
@@ -28,6 +26,7 @@ from app.schemas.goods import (
     UnitUpdate,
 )
 from app.services.goods import GoodsCategoryService, GoodsService, UnitService
+from app.services.idempotency import IdempotencyService
 
 
 router = APIRouter(prefix="/base", tags=["基础资料-商品"])
@@ -53,15 +52,22 @@ async def create_goods(
     db: DbDep,
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:goods:add"))],
-    redis=Depends(get_redis),
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", min_length=1, max_length=128)
+    ] = None,
 ) -> ApiResponse[GoodsOut]:
-    # 幂等校验：同一租户、同一操作人、同一编码在 24 小时内只允许提交一次
-    if redis is not None:
-        idem_key = f"idempotency:create_goods:{tenant_id}:{current_user.id}:{payload.code or 'auto'}"
-        existed = await redis.set(idem_key, "1", ex=86400, nx=True)
-        if not existed:
-            raise AppException(ErrorCode.CONFLICT, "重复提交，请勿频繁新增商品")
-    result = await GoodsService(db, tenant_id=tenant_id).create_goods(payload)
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="create_goods",
+        idempotency_key=idempotency_key,
+        request_body=payload,
+        operation=lambda: GoodsService(db, tenant_id).create_goods(
+            payload,
+            current_user.id,
+            commit=False,
+        ),
+    )
     return success_response(result)
 
 
@@ -84,7 +90,21 @@ async def update_goods(
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:goods:edit"))],
 ) -> ApiResponse[GoodsOut]:
-    result = await GoodsService(db, tenant_id=tenant_id).update_goods(goods_id, payload)
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="update_goods",
+        request_body={
+            "id": goods_id,
+            "payload": payload.model_dump(mode="json", exclude_unset=True),
+        },
+        operation=lambda: GoodsService(db, tenant_id).update_goods(
+            goods_id,
+            payload,
+            current_user.id,
+            commit=False,
+        ),
+    )
     return success_response(result)
 
 
@@ -95,8 +115,18 @@ async def delete_goods(
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:goods:delete"))],
 ) -> ApiResponse[None]:
-    await GoodsService(db, tenant_id=tenant_id).delete_goods(goods_id)
-    return success_response(None)
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="delete_goods",
+        request_body={"id": goods_id},
+        operation=lambda: GoodsService(db, tenant_id).delete_goods(
+            goods_id,
+            current_user.id,
+            commit=False,
+        ),
+    )
+    return success_response(result)
 
 
 # ---------- 商品分类 ----------
@@ -119,15 +149,22 @@ async def create_category(
     db: DbDep,
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:category:add"))],
-    redis=Depends(get_redis),
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", min_length=1, max_length=128)
+    ] = None,
 ) -> ApiResponse[GoodsCategoryOut]:
-    # 幂等校验：同一租户、同一操作人、同一分类名称在 24 小时内只允许提交一次
-    if redis is not None:
-        idem_key = f"idempotency:create_category:{tenant_id}:{current_user.id}:{payload.name}"
-        existed = await redis.set(idem_key, "1", ex=86400, nx=True)
-        if not existed:
-            raise AppException(ErrorCode.CONFLICT, "重复提交，请勿频繁新增分类")
-    result = await GoodsCategoryService(db, tenant_id=tenant_id).create_category(payload)
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="create_category",
+        idempotency_key=idempotency_key,
+        request_body=payload,
+        operation=lambda: GoodsCategoryService(db, tenant_id).create_category(
+            payload,
+            current_user.id,
+            commit=False,
+        ),
+    )
     return success_response(result)
 
 
@@ -150,7 +187,21 @@ async def update_category(
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:category:edit"))],
 ) -> ApiResponse[GoodsCategoryOut]:
-    result = await GoodsCategoryService(db, tenant_id=tenant_id).update_category(category_id, payload)
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="update_category",
+        request_body={
+            "id": category_id,
+            "payload": payload.model_dump(mode="json", exclude_unset=True),
+        },
+        operation=lambda: GoodsCategoryService(db, tenant_id).update_category(
+            category_id,
+            payload,
+            current_user.id,
+            commit=False,
+        ),
+    )
     return success_response(result)
 
 
@@ -161,8 +212,18 @@ async def delete_category(
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:category:delete"))],
 ) -> ApiResponse[None]:
-    await GoodsCategoryService(db, tenant_id=tenant_id).delete_category(category_id)
-    return success_response(None)
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="delete_category",
+        request_body={"id": category_id},
+        operation=lambda: GoodsCategoryService(db, tenant_id).delete_category(
+            category_id,
+            current_user.id,
+            commit=False,
+        ),
+    )
+    return success_response(result)
 
 
 # ---------- 计量单位 ----------
@@ -185,17 +246,22 @@ async def create_unit(
     db: DbDep,
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:unit:add"))],
-    redis=Depends(get_redis),
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", min_length=1, max_length=128)
+    ] = None,
 ) -> ApiResponse[UnitOut]:
-    # 幂等校验：同一租户、同一操作人、同一单位名称在 24 小时内只允许提交一次
-    if redis is None:
-        result = await UnitService(db, tenant_id=tenant_id).create_unit(payload)
-    else:
-        idem_key = f"idempotency:create_unit:{tenant_id}:{current_user.id}:{payload.name}"
-        existed = await redis.set(idem_key, "1", ex=86400, nx=True)
-        if not existed:
-            raise AppException(ErrorCode.CONFLICT, "重复提交，请勿频繁新增单位")
-        result = await UnitService(db, tenant_id=tenant_id).create_unit(payload)
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="create_unit",
+        idempotency_key=idempotency_key,
+        request_body=payload,
+        operation=lambda: UnitService(db, tenant_id).create_unit(
+            payload,
+            current_user.id,
+            commit=False,
+        ),
+    )
     return success_response(result)
 
 
@@ -218,7 +284,21 @@ async def update_unit(
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:unit:edit"))],
 ) -> ApiResponse[UnitOut]:
-    result = await UnitService(db, tenant_id=tenant_id).update_unit(unit_id, payload)
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="update_unit",
+        request_body={
+            "id": unit_id,
+            "payload": payload.model_dump(mode="json", exclude_unset=True),
+        },
+        operation=lambda: UnitService(db, tenant_id).update_unit(
+            unit_id,
+            payload,
+            current_user.id,
+            commit=False,
+        ),
+    )
     return success_response(result)
 
 
@@ -229,5 +309,15 @@ async def delete_unit(
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:unit:delete"))],
 ) -> ApiResponse[None]:
-    await UnitService(db, tenant_id=tenant_id).delete_unit(unit_id)
-    return success_response(None)
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="delete_unit",
+        request_body={"id": unit_id},
+        operation=lambda: UnitService(db, tenant_id).delete_unit(
+            unit_id,
+            current_user.id,
+            commit=False,
+        ),
+    )
+    return success_response(result)

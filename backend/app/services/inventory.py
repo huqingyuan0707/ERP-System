@@ -1,14 +1,8 @@
-"""库存服务：INV-05 锁定/释放、INV-06 库存变更统一服务。
-
-本服务是 ERP 库存模块的事务核心，所有入库/出库/退货/调拨/盘点
-都必须通过 change_stock 在单个事务内完成，保证库存、流水、
-单据状态四处数据一致。
-"""
+"""库存写入统一服务：租户引用、状态、数量精度、库存与流水同事务。"""
 
 from decimal import Decimal
 
 from app.core.exceptions import AppException, ErrorCode
-from app.models.inventory import InvStock
 from app.repositories.inventory import InventoryRepository
 from app.schemas.inventory import (
     ChangeStockIn,
@@ -17,187 +11,154 @@ from app.schemas.inventory import (
     StockOut,
     UnlockStockIn,
 )
+from app.utils.numbers import validate_quantity
 
 
 class InventoryService:
-    """库存业务逻辑。"""
+    """默认独立提交；单据/幂等包装器使用 commit=False 管理外层事务。"""
 
     def __init__(self, db, tenant_id: int) -> None:
         self._db = db
         self.tenant_id = tenant_id
         self._repo = InventoryRepository(db, tenant_id=tenant_id)
 
-    # ------------------------------------------------------------------
-    # INV-05：库存锁定 / 释放（供订单审核/关闭调用）
-    # ------------------------------------------------------------------
+    async def _validate_references(
+        self, warehouse_id: int, goods_id: int, qty: Decimal, *, allow_disabled: bool = False
+    ) -> None:
+        """先校验并锁住档案再触碰库存；停用仅允许释放历史锁定。"""
+        warehouse = await self._repo.get_warehouse_for_update(warehouse_id)
+        if warehouse is None:
+            raise AppException(ErrorCode.VALIDATION_ERROR, "仓库不存在或不可访问")
+        goods = await self._repo.get_goods_for_update(goods_id)
+        if goods is None:
+            raise AppException(ErrorCode.VALIDATION_ERROR, "商品不存在或不可访问")
+        precision = 4
+        if goods.unit_id is not None:
+            unit = await self._repo.get_unit_for_update(goods.unit_id)
+            if unit is None:
+                raise AppException(ErrorCode.VALIDATION_ERROR, "商品单位不存在或不可访问")
+            precision = unit.precision
+        if not allow_disabled and (warehouse.status != 1 or goods.status != 1):
+            raise AppException(ErrorCode.VALIDATION_ERROR, "停用商品或仓库不允许新增库存写入")
+        validate_quantity(qty, precision)
+        if qty <= 0:
+            raise AppException(ErrorCode.VALIDATION_ERROR, "库存数量必须大于 0")
 
-    async def lock_stock(self, payload: LockStockIn) -> StockOut:
-        """锁定库存：available_qty -= qty, locked_qty += qty。
-        
-        可用量不足时拒绝，避免超卖。
-        """
-        stock = await self._repo.get_stock_for_update(
-            payload.warehouse_id, payload.goods_id
-        )
-        if stock is None:
-            stock = await self._repo.create_stock(
-                payload.warehouse_id, payload.goods_id
+    async def lock_stock(self, payload: LockStockIn, *, commit: bool = True) -> StockOut:
+        """锁定库存；无记录或可用量不足时不创建空库存行。"""
+        try:
+            await self._validate_references(payload.warehouse_id, payload.goods_id, payload.qty)
+            stock = await self._repo.get_stock_for_update(payload.warehouse_id, payload.goods_id)
+            if stock is None or stock.available_qty < payload.qty:
+                raise AppException(ErrorCode.VALIDATION_ERROR, "可用库存不足，无法锁定")
+            before_available = stock.available_qty
+            stock.locked_qty += payload.qty
+            stock.available_qty = stock.qty - stock.locked_qty
+            await self._repo.add_flow(
+                warehouse_id=payload.warehouse_id,
+                goods_id=payload.goods_id,
+                flow_type="lock",
+                direction=0,
+                qty=payload.qty,
+                before_qty=before_available,
+                after_qty=stock.available_qty,
+                unit_cost=stock.avg_cost,
+                source_type=payload.source_type,
+                source_no=payload.source_no,
+                biz_time=payload.biz_time,
+                remark=payload.remark or "库存锁定",
             )
+            await self._db.flush()
+            result = StockOut.model_validate(stock)
+            if commit:
+                await self._db.commit()
+            return result
+        except Exception:
+            if commit:
+                await self._db.rollback()
+            raise
 
-        if stock.available_qty < payload.qty:
-            raise AppException(
-                ErrorCode.VALIDATION_ERROR,
-                f"可用库存不足：商品 {payload.goods_id} 可用 {stock.available_qty}，请求 {payload.qty}",
+    async def unlock_stock(self, payload: UnlockStockIn, *, commit: bool = True) -> StockOut:
+        """释放历史锁定，允许已停用档案；已删除、跨租户档案仍拒绝。"""
+        try:
+            await self._validate_references(
+                payload.warehouse_id, payload.goods_id, payload.qty, allow_disabled=True
             )
-
-        before_available = stock.available_qty
-        stock.locked_qty += payload.qty
-        stock.available_qty = stock.qty - stock.locked_qty
-        await self._db.flush()
-
-        await self._repo.add_flow(
-            warehouse_id=payload.warehouse_id,
-            goods_id=payload.goods_id,
-            flow_type="lock",
-            direction=0,  # 锁定不改变 qty，只改变 locked
-            qty=payload.qty,
-            before_qty=before_available,
-            after_qty=stock.available_qty,
-            unit_cost=stock.avg_cost,
-            source_type=payload.source_type,
-            source_no=payload.source_no,
-            biz_time=payload.biz_time,
-            remark=payload.remark or "库存锁定",
-        )
-
-        await self._db.commit()
-        return StockOut(
-            id=stock.id,
-            warehouse_id=stock.warehouse_id,
-            goods_id=stock.goods_id,
-            qty=stock.qty,
-            locked_qty=stock.locked_qty,
-            available_qty=stock.available_qty,
-            avg_cost=stock.avg_cost,
-        )
-
-    async def unlock_stock(self, payload: UnlockStockIn) -> StockOut:
-        """释放库存：locked_qty -= qty, available_qty += qty。"""
-        stock = await self._repo.get_stock_for_update(
-            payload.warehouse_id, payload.goods_id
-        )
-        if stock is None:
-            raise AppException(ErrorCode.NOT_FOUND, "库存记录不存在")
-
-        if stock.locked_qty < payload.qty:
-            raise AppException(
-                ErrorCode.VALIDATION_ERROR,
-                f"锁定数量不足：已锁定 {stock.locked_qty}，请求释放 {payload.qty}",
+            stock = await self._repo.get_stock_for_update(payload.warehouse_id, payload.goods_id)
+            if stock is None:
+                raise AppException(ErrorCode.NOT_FOUND, "库存记录不存在")
+            if stock.locked_qty < payload.qty:
+                raise AppException(ErrorCode.VALIDATION_ERROR, "锁定数量不足，无法释放")
+            before_available = stock.available_qty
+            stock.locked_qty -= payload.qty
+            stock.available_qty = stock.qty - stock.locked_qty
+            await self._repo.add_flow(
+                warehouse_id=payload.warehouse_id,
+                goods_id=payload.goods_id,
+                flow_type="unlock",
+                direction=0,
+                qty=payload.qty,
+                before_qty=before_available,
+                after_qty=stock.available_qty,
+                unit_cost=stock.avg_cost,
+                source_type=payload.source_type,
+                source_no=payload.source_no,
+                biz_time=payload.biz_time,
+                remark=payload.remark or "库存释放",
             )
+            await self._db.flush()
+            result = StockOut.model_validate(stock)
+            if commit:
+                await self._db.commit()
+            return result
+        except Exception:
+            if commit:
+                await self._db.rollback()
+            raise
 
-        before_available = stock.available_qty
-        stock.locked_qty -= payload.qty
-        stock.available_qty = stock.qty - stock.locked_qty
-        await self._db.flush()
-
-        await self._repo.add_flow(
-            warehouse_id=payload.warehouse_id,
-            goods_id=payload.goods_id,
-            flow_type="unlock",
-            direction=0,
-            qty=payload.qty,
-            before_qty=before_available,
-            after_qty=stock.available_qty,
-            unit_cost=stock.avg_cost,
-            source_type=payload.source_type,
-            source_no=payload.source_no,
-            biz_time=payload.biz_time,
-            remark=payload.remark or "库存释放",
-        )
-
-        await self._db.commit()
-        return StockOut(
-            id=stock.id,
-            warehouse_id=stock.warehouse_id,
-            goods_id=stock.goods_id,
-            qty=stock.qty,
-            locked_qty=stock.locked_qty,
-            available_qty=stock.available_qty,
-            avg_cost=stock.avg_cost,
-        )
-
-    # ------------------------------------------------------------------
-    # INV-06：库存变更统一服务（所有入库/出库/退货/调拨/盘点调用）
-    # ------------------------------------------------------------------
-
-    async def change_stock(self, payload: ChangeStockIn) -> ChangeStockOut:
-        """库存变更统一服务（单事务）。
-        
-        流程：
-        1. 行锁查询/创建库存行
-        2. 校验：出库时 available >= qty，不允许负库存
-        3. 更新 qty / locked_qty / available_qty / avg_cost
-        4. 写入 inv_stock_flow 流水（before/after 连续）
-        5. 提交事务
-        
-        任一步骤失败则整个事务回滚。
-        """
-        stock = await self._repo.get_stock_for_update(
-            payload.warehouse_id, payload.goods_id
-        )
-        if stock is None:
-            stock = await self._repo.create_stock(
-                payload.warehouse_id, payload.goods_id
+    async def change_stock(self, payload: ChangeStockIn, *, commit: bool = True) -> ChangeStockOut:
+        """普通库存变更拒绝停用档案；数量校验通过后才允许创建库存。"""
+        try:
+            await self._validate_references(payload.warehouse_id, payload.goods_id, payload.qty)
+            stock = await self._repo.get_stock_for_update(payload.warehouse_id, payload.goods_id)
+            if payload.direction == -1 and (stock is None or stock.available_qty < payload.qty):
+                raise AppException(ErrorCode.VALIDATION_ERROR, "可用库存不足，无法出库")
+            if stock is None:
+                stock = await self._repo.create_stock(payload.warehouse_id, payload.goods_id)
+            before_qty = stock.qty
+            before_available = stock.available_qty
+            stock.qty += payload.qty * payload.direction
+            stock.available_qty = stock.qty - stock.locked_qty
+            if payload.direction == 1:
+                total_cost = before_qty * stock.avg_cost + payload.qty * payload.unit_cost
+                stock.avg_cost = total_cost / stock.qty if stock.qty > 0 else Decimal("0")
+            await self._repo.add_flow(
+                warehouse_id=payload.warehouse_id,
+                goods_id=payload.goods_id,
+                flow_type=payload.biz_type,
+                direction=payload.direction,
+                qty=payload.qty,
+                before_qty=before_available,
+                after_qty=stock.available_qty,
+                unit_cost=payload.unit_cost,
+                source_type=payload.biz_type,
+                source_no=payload.source_no,
+                biz_time=payload.biz_time,
+                remark=payload.remark,
             )
-
-        # ---------- 校验 ----------
-        if payload.direction == -1:  # 出库
-            if stock.available_qty < payload.qty:
-                raise AppException(
-                    ErrorCode.VALIDATION_ERROR,
-                    f"可用库存不足：商品 {payload.goods_id} 可用 {stock.available_qty}，请求出库 {payload.qty}",
-                )
-
-        # ---------- 更新库存 ----------
-        before_qty = stock.qty
-        before_available = stock.available_qty
-
-        if payload.direction == 1:  # 入库
-            stock.qty += payload.qty
-        else:  # 出库
-            stock.qty -= payload.qty
-
-        stock.available_qty = stock.qty - stock.locked_qty
-
-        # 移动加权平均成本（简化版：入库按新成本混合，出库不改 avg_cost）
-        if payload.direction == 1 and payload.unit_cost > 0:
-            total_cost = stock.qty * stock.avg_cost + payload.qty * payload.unit_cost
-            stock.avg_cost = total_cost / stock.qty if stock.qty > 0 else Decimal("0")
-
-        await self._db.flush()
-
-        # ---------- 写流水 ----------
-        await self._repo.add_flow(
-            warehouse_id=payload.warehouse_id,
-            goods_id=payload.goods_id,
-            flow_type=payload.biz_type,
-            direction=payload.direction,
-            qty=payload.qty,
-            before_qty=before_available,
-            after_qty=stock.available_qty,
-            unit_cost=payload.unit_cost,
-            source_type=payload.biz_type,
-            source_no=payload.source_no,
-            biz_time=payload.biz_time,
-            remark=payload.remark,
-        )
-
-        await self._db.commit()
-        return ChangeStockOut(
-            warehouse_id=stock.warehouse_id,
-            goods_id=stock.goods_id,
-            qty=stock.qty,
-            locked_qty=stock.locked_qty,
-            available_qty=stock.available_qty,
-            avg_cost=stock.avg_cost,
-        )
+            await self._db.flush()
+            result = ChangeStockOut(
+                warehouse_id=stock.warehouse_id,
+                goods_id=stock.goods_id,
+                qty=stock.qty,
+                locked_qty=stock.locked_qty,
+                available_qty=stock.available_qty,
+                avg_cost=stock.avg_cost,
+            )
+            if commit:
+                await self._db.commit()
+            return result
+        except Exception:
+            if commit:
+                await self._db.rollback()
+            raise

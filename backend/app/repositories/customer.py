@@ -87,7 +87,7 @@ class CustomerRepository(BaseRepository[BdCustomer]):
             )
         if query.status is not None:
             stmt = stmt.where(BdCustomer.status == query.status)
-        return stmt.order_by(BdCustomer.id.desc())
+        return self._apply_tenant_filter(stmt).order_by(BdCustomer.id.desc())
 
     async def list_selectable(self) -> list[BdCustomer]:
         """返回启用状态的客户；停用客户不会出现在新单据的可选列表中。"""

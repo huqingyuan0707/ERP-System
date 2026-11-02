@@ -47,7 +47,17 @@ const resetState = (): void => {
 }
 
 const handleFileChange = (uploadFile: { raw?: File }): void => {
-  fileRef.value = uploadFile.raw ?? null
+  const file = uploadFile.raw
+  if (!file) return
+  if (!file.name.toLowerCase().endsWith('.xlsx')) {
+    ElMessage.warning('仅支持 .xlsx，请将 .xls 另存为 .xlsx 后上传')
+    return
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    ElMessage.warning('文件大小不能超过 5MB')
+    return
+  }
+  fileRef.value = file
   errorRows.value = []
   failCount.value = 0
 }
@@ -92,8 +102,9 @@ const handleImport = async (): Promise<void> => {
     <div class="template-row">
       <el-button text :icon="'Download'" @click="downloadTemplate">下载导入模板</el-button>
       <span class="template-tip">
-        模板列：商品编码/商品名称/规格/分类名称/单位名称/条码/成本价/售价/库存下限/库存上限/备注；
-        分类与单位需先在系统中维护；全部校验通过才入库，任一行出错则整批不入库。
+        仅支持 .xlsx，最大5MB、5000行；数据填在“商品导入”页，说明示例在独立页。
+        商品编码/名称必填；分类填写完整路径或无歧义单名，单位需先维护；
+        金额最多2位、库存最多4位小数，状态可填启用/停用。任一行出错则整批不入库。
       </span>
     </div>
     <el-upload
@@ -102,7 +113,8 @@ const handleImport = async (): Promise<void> => {
       action=""
       :show-file-list="false"
       :on-change="handleFileChange"
-      accept=".xlsx,.xls"
+      :auto-upload="false"
+      accept=".xlsx"
     >
       <el-button type="dashed" :icon="'Upload'">点击上传 Excel 文件</el-button>
     </el-upload>

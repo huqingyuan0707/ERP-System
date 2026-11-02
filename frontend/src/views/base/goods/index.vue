@@ -172,10 +172,10 @@ interface GoodsForm {
   spec: string
   unitId: number | null
   barcode: string
-  costPrice: number
-  salePrice: number
-  stockLower: number
-  stockUpper: number
+  costPrice: string
+  salePrice: string
+  stockLower: string
+  stockUpper: string
   status: number
   remark: string
 }
@@ -187,22 +187,49 @@ const createEmptyForm = (): GoodsForm => ({
   spec: '',
   unitId: null,
   barcode: '',
-  costPrice: 0,
-  salePrice: 0,
-  stockLower: 0,
-  stockUpper: 0,
+  costPrice: '0',
+  salePrice: '0',
+  stockLower: '0',
+  stockUpper: '0',
   status: 1,
   remark: '',
 })
 
 const form = reactive<GoodsForm>(createEmptyForm())
+const quantityPrecision = computed(() => units.value.find((unit) => unit.id === form.unitId)?.precision ?? 4)
+
+const decimalUnits = (value: string, precision: number, integerDigits: number): bigint | null => {
+  const match = /^(\d+)(?:\.(\d*))?$/.exec(value.trim())
+  if (!match) return null
+  const integer = match[1]!.replace(/^0+(?=\d)/, '')
+  const fraction = (match[2] ?? '').replace(/0+$/, '')
+  if (integer.length > integerDigits || fraction.length > precision) return null
+  return BigInt(integer + fraction.padEnd(4, '0'))
+}
+
+const formatPrice = (value: string | number): string => {
+  const [integer, fraction = ''] = String(value).split('.')
+  return `${integer}.${fraction.padEnd(2, '0')}`
+}
+
+const draftKeys = new Map<string, { body: string; key: string }>()
+const submissionKey = (scope: string, payload: unknown): string => {
+  const body = JSON.stringify(payload)
+  const previous = draftKeys.get(scope)
+  if (previous?.body === body) return previous.key
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  const key = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  draftKeys.set(scope, { body, key })
+  return key
+}
 
 const rules: FormRules = {
-  name: [{ required: true, message: '请输入商品名称', trigger: 'blur' }],
+  name: [{ required: true, whitespace: true, message: '请输入商品名称', trigger: 'blur' }],
   salePrice: [{ required: true, message: '请输入销售价', trigger: 'blur' }],
 }
 
 const openCreate = (): void => {
+  draftKeys.delete('goods')
   dialogMode.value = 'create'
   editingId.value = null
   Object.assign(form, createEmptyForm())
@@ -221,10 +248,10 @@ const openEdit = (row: Goods): void => {
     spec: row.spec ?? '',
     unitId: row.unitId,
     barcode: row.barcode ?? '',
-    costPrice: row.costPrice,
-    salePrice: row.salePrice,
-    stockLower: row.stockLower,
-    stockUpper: row.stockUpper,
+    costPrice: String(row.costPrice),
+    salePrice: String(row.salePrice),
+    stockLower: String(row.stockLower),
+    stockUpper: String(row.stockUpper),
     status: row.status,
     remark: row.remark ?? '',
   })
@@ -232,29 +259,41 @@ const openEdit = (row: Goods): void => {
 }
 
 const handleSubmit = async (): Promise<void> => {
+  if (submitting.value) return
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
-  if (form.stockUpper > 0 && form.stockLower > form.stockUpper) {
+  const lower = decimalUnits(form.stockLower, quantityPrecision.value, 14)
+  const upper = decimalUnits(form.stockUpper, quantityPrecision.value, 14)
+  if (decimalUnits(form.costPrice, 2, 16) === null || decimalUnits(form.salePrice, 2, 16) === null) {
+    ElMessage.error('价格须为非负数，整数最多16位，小数最多2位')
+    return
+  }
+  if (lower === null || upper === null) {
+    ElMessage.error(`库存上下限须为非负数，整数最多14位，小数最多${quantityPrecision.value}位`)
+    return
+  }
+  if (lower > upper) {
     ElMessage.error('库存下限不能大于上限')
     return
   }
   submitting.value = true
   try {
     const payload = {
-      name: form.name,
-      categoryId: form.categoryId,
+      name: form.name.trim(),
+      categoryId: form.categoryId || null,
       spec: form.spec || null,
-      unitId: form.unitId,
-      barcode: form.barcode || null,
-      costPrice: form.costPrice,
-      salePrice: form.salePrice,
-      stockLower: form.stockLower,
-      stockUpper: form.stockUpper,
+      unitId: form.unitId || null,
+      barcode: form.barcode.trim() || null,
+      costPrice: form.costPrice.trim(),
+      salePrice: form.salePrice.trim(),
+      stockLower: form.stockLower.trim(),
+      stockUpper: form.stockUpper.trim(),
       status: form.status,
       remark: form.remark || null,
     }
     if (dialogMode.value === 'create') {
-      await createGoods({ ...payload, code: form.code || null })
+      const createPayload = { ...payload, code: form.code.trim() || null }
+      await createGoods(createPayload, submissionKey('goods', createPayload))
       ElMessage.success('新增成功')
     } else if (editingId.value !== null) {
       await updateGoods(editingId.value, payload)
@@ -322,7 +361,7 @@ const createEmptyCategoryForm = (): CategoryForm => ({
 const categoryForm = reactive<CategoryForm>(createEmptyCategoryForm())
 
 const categoryRules: FormRules = {
-  name: [{ required: true, message: '请输入分类名称', trigger: 'blur' }],
+  name: [{ required: true, whitespace: true, message: '请输入分类名称', trigger: 'blur' }],
 }
 
 /** 上级分类选项：编辑时剔除自身及其子树，避免形成循环引用。 */
@@ -336,6 +375,7 @@ const categoryParentOptions = computed<CategoryTreeNode[]>(() => {
 })
 
 const openCategoryCreate = (parent: CategoryTreeNode | null): void => {
+  draftKeys.delete('category')
   categoryDialogMode.value = 'create'
   editingCategoryId.value = null
   Object.assign(categoryForm, createEmptyCategoryForm())
@@ -358,18 +398,19 @@ const openCategoryEdit = (node: CategoryTreeNode): void => {
 }
 
 const handleCategorySubmit = async (): Promise<void> => {
+  if (categorySubmitting.value) return
   const valid = await categoryFormRef.value?.validate().catch(() => false)
   if (!valid) return
   categorySubmitting.value = true
   try {
     const payload = {
       name: categoryForm.name.trim(),
-      parentId: categoryForm.parentId,
+      parentId: categoryForm.parentId || null,
       sort: categoryForm.sort,
       remark: categoryForm.remark.trim() || null,
     }
     if (categoryDialogMode.value === 'create') {
-      await createCategory(payload)
+      await createCategory(payload, submissionKey('category', payload))
       ElMessage.success('分类新增成功')
     } else if (editingCategoryId.value !== null) {
       await updateCategory(editingCategoryId.value, payload)
@@ -417,7 +458,7 @@ const createEmptyUnitForm = (): UnitForm => ({ name: '', precision: 0, remark: '
 const unitForm = reactive<UnitForm>(createEmptyUnitForm())
 
 const unitRules: FormRules = {
-  name: [{ required: true, message: '请输入单位名称', trigger: 'blur' }],
+  name: [{ required: true, whitespace: true, message: '请输入单位名称', trigger: 'blur' }],
 }
 
 const openUnitDialog = (): void => {
@@ -427,6 +468,7 @@ const openUnitDialog = (): void => {
 }
 
 const resetUnitForm = (): void => {
+  draftKeys.delete('unit')
   editingUnitId.value = null
   Object.assign(unitForm, createEmptyUnitForm())
   nextTick(() => unitFormRef.value?.clearValidate())
@@ -442,6 +484,7 @@ const handleUnitEdit = (row: Unit): void => {
 }
 
 const handleUnitSubmit = async (): Promise<void> => {
+  if (unitSubmitting.value) return
   const valid = await unitFormRef.value?.validate().catch(() => false)
   if (!valid) return
   unitSubmitting.value = true
@@ -452,7 +495,7 @@ const handleUnitSubmit = async (): Promise<void> => {
       remark: unitForm.remark.trim() || null,
     }
     if (editingUnitId.value === null) {
-      await createUnit(payload)
+      await createUnit(payload, submissionKey('unit', payload))
       ElMessage.success('单位新增成功')
     } else {
       await updateUnit(editingUnitId.value, payload)
@@ -658,10 +701,10 @@ onMounted(() => {
             <el-table-column prop="categoryName" label="分类" width="120" />
             <el-table-column prop="unitName" label="单位" width="90" />
             <el-table-column label="成本价" width="110" align="right">
-              <template #default="{ row }">{{ Number(row.costPrice).toFixed(2) }}</template>
+              <template #default="{ row }">{{ formatPrice(row.costPrice) }}</template>
             </el-table-column>
             <el-table-column label="销售价" width="110" align="right">
-              <template #default="{ row }">{{ Number(row.salePrice).toFixed(2) }}</template>
+              <template #default="{ row }">{{ formatPrice(row.salePrice) }}</template>
             </el-table-column>
             <el-table-column label="库存范围" width="150" align="center">
               <template #default="{ row }">
@@ -734,6 +777,7 @@ onMounted(() => {
             <el-form-item label="商品编码">
               <el-input
                 v-model="form.code"
+                maxlength="32"
                 :disabled="dialogMode === 'edit'"
                 placeholder="留空自动生成"
               />
@@ -741,7 +785,7 @@ onMounted(() => {
           </el-col>
           <el-col :span="12">
             <el-form-item label="商品名称" prop="name">
-              <el-input v-model="form.name" placeholder="必填" />
+              <el-input v-model="form.name" maxlength="128" placeholder="必填" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -771,27 +815,27 @@ onMounted(() => {
           </el-col>
           <el-col :span="12">
             <el-form-item label="条码">
-              <el-input v-model="form.barcode" placeholder="可选" />
+              <el-input v-model="form.barcode" maxlength="64" placeholder="可选" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="成本价">
-              <el-input-number v-model="form.costPrice" :min="0" :precision="4" class="full" />
+              <el-input v-model="form.costPrice" inputmode="decimal" placeholder="价格最多2位小数" class="full" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="销售价" prop="salePrice">
-              <el-input-number v-model="form.salePrice" :min="0" :precision="4" class="full" />
+              <el-input v-model="form.salePrice" inputmode="decimal" placeholder="价格最多2位小数" class="full" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="库存下限">
-              <el-input-number v-model="form.stockLower" :min="0" :precision="4" class="full" />
+              <el-input v-model="form.stockLower" inputmode="decimal" placeholder="按所选单位精度填写" class="full" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="库存上限">
-              <el-input-number v-model="form.stockUpper" :min="0" :precision="4" class="full" />
+              <el-input v-model="form.stockUpper" inputmode="decimal" placeholder="按所选单位精度填写" class="full" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -881,7 +925,7 @@ onMounted(() => {
           </el-col>
           <el-col :span="8">
             <el-form-item label-width="0">
-              <el-button type="primary" :loading="unitSubmitting" @click="handleUnitSubmit">
+              <el-button v-perm="editingUnitId === null ? 'base:unit:add' : 'base:unit:edit'" type="primary" :loading="unitSubmitting" @click="handleUnitSubmit">
                 {{ editingUnitId === null ? '新增' : '保存' }}
               </el-button>
               <el-button v-if="editingUnitId !== null" @click="resetUnitForm">取消</el-button>

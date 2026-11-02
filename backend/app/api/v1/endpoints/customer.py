@@ -1,15 +1,8 @@
-"""基础资料端点（客户 CRUD）。
-
-职责：
-  1. 定义 HTTP 接口的 URL、方法与参数校验；
-  2. 做登录鉴权（JWT）和权限校验（perm_code）；
-  3. 把业务请求转交给 Service 层；
-  4. 把 Service 返回结果包装成统一响应 {code, message, data}。
-"""
+"""Customer 基础资料接口：权限、租户、显式幂等键与业务同事务。"""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query
 
 from app.core.deps import DbDep, TenantDep, require_perm
 from app.models.sys import SysUser
@@ -22,12 +15,10 @@ from app.schemas.customer import (
     CustomerUpdate,
 )
 from app.services.customer import CustomerService
+from app.services.idempotency import IdempotencyService
 
 
 router = APIRouter(prefix="/base", tags=["基础资料-客户"])
-
-
-# ---------- 客户 ----------
 
 
 @router.get("/customers", summary="客户列表")
@@ -37,9 +28,7 @@ async def list_customers(
     tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm("base:customer:list"))],
 ) -> ApiResponse[PageResult[CustomerOut]]:
-    """查询客户分页列表。"""
-    result = await CustomerService(db, tenant_id=tenant_id).list_customers(query)
-    return success_response(result)
+    return success_response(await CustomerService(db, tenant_id).list_customers(query))
 
 
 @router.get("/customers/options", summary="可选客户列表")
@@ -48,23 +37,89 @@ async def list_selectable_customers(
     tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm("base:customer:list"))],
 ) -> ApiResponse[list[CustomerOut]]:
-    """查询可用于新单据的客户列表，只返回启用状态。"""
-    result = await CustomerService(db, tenant_id=tenant_id).list_selectable_customers()
-    return success_response(result)
+    return success_response(await CustomerService(db, tenant_id).list_selectable_customers())
 
 
-@router.post("/customers", summary="新增客户")
+@router.post("/customers")
 async def create_customer(
     payload: CustomerCreate,
     db: DbDep,
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("base:customer:add"))],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", min_length=1, max_length=128)
+    ] = None,
 ) -> ApiResponse[CustomerOut]:
-    """新增一个客户。"""
-    result = await CustomerService(db, tenant_id=tenant_id).create_customer(
-        payload, current_user.id
+    service = CustomerService(db, tenant_id)
+
+    async def operation():
+        return await service.create_customer(payload, current_user.id, commit=False)
+
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="create_customer",
+        idempotency_key=idempotency_key,
+        request_body=payload,
+        operation=operation,
     )
-    return success_response(result)
+    return success_response(CustomerOut.model_validate(result))
+
+
+@router.put("/customers/{customer_id}")
+async def update_customer(
+    customer_id: int,
+    payload: CustomerUpdate,
+    db: DbDep,
+    tenant_id: TenantDep,
+    current_user: Annotated[SysUser, Depends(require_perm("base:customer:edit"))],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", min_length=1, max_length=128)
+    ] = None,
+) -> ApiResponse[CustomerOut]:
+    service = CustomerService(db, tenant_id)
+
+    async def operation():
+        return await service.update_customer(customer_id, payload, current_user.id, commit=False)
+
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="update_customer",
+        idempotency_key=idempotency_key,
+        request_body={
+            "id": customer_id,
+            "payload": payload.model_dump(mode="json", exclude_unset=True),
+        },
+        operation=operation,
+    )
+    return success_response(CustomerOut.model_validate(result))
+
+
+@router.delete("/customers/{customer_id}")
+async def delete_customer(
+    customer_id: int,
+    db: DbDep,
+    tenant_id: TenantDep,
+    current_user: Annotated[SysUser, Depends(require_perm("base:customer:delete"))],
+    idempotency_key: Annotated[
+        str | None, Header(alias="Idempotency-Key", min_length=1, max_length=128)
+    ] = None,
+) -> ApiResponse[None]:
+    service = CustomerService(db, tenant_id)
+
+    async def operation():
+        return await service.delete_customer(customer_id, current_user.id, commit=False)
+
+    await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="delete_customer",
+        idempotency_key=idempotency_key,
+        request_body={"id": customer_id},
+        operation=operation,
+    )
+    return success_response(None)
 
 
 @router.get("/customers/{customer_id}", summary="客户详情")
@@ -74,36 +129,7 @@ async def get_customer(
     tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm("base:customer:list"))],
 ) -> ApiResponse[CustomerOut]:
-    """按主键查询客户详情。"""
-    result = await CustomerService(db, tenant_id=tenant_id).get_customer(customer_id)
-    return success_response(result)
-
-
-@router.put("/customers/{customer_id}", summary="修改客户")
-async def update_customer(
-    customer_id: int,
-    payload: CustomerUpdate,
-    db: DbDep,
-    tenant_id: TenantDep,
-    current_user: Annotated[SysUser, Depends(require_perm("base:customer:edit"))],
-) -> ApiResponse[CustomerOut]:
-    """修改客户信息（部分更新）。"""
-    result = await CustomerService(db, tenant_id=tenant_id).update_customer(
-        customer_id, payload, current_user.id
-    )
-    return success_response(result)
-
-
-@router.delete("/customers/{customer_id}", summary="删除客户")
-async def delete_customer(
-    customer_id: int,
-    db: DbDep,
-    tenant_id: TenantDep,
-    current_user: Annotated[SysUser, Depends(require_perm("base:customer:delete"))],
-) -> ApiResponse[None]:
-    """删除客户（软删除，存在单据引用时返回 409）。"""
-    await CustomerService(db, tenant_id=tenant_id).delete_customer(customer_id, current_user.id)
-    return success_response(None)
+    return success_response(await CustomerService(db, tenant_id).get_customer(customer_id))
 
 
 @router.get("/customers/{customer_id}/credit", summary="客户信用概况")
@@ -113,6 +139,4 @@ async def get_customer_credit(
     tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm("base:customer:list"))],
 ) -> ApiResponse[CustomerCreditOut]:
-    """返回客户信用额度、应收余额、可用额度与是否超限，供前端超限提示使用。"""
-    result = await CustomerService(db, tenant_id=tenant_id).get_credit_summary(customer_id)
-    return success_response(result)
+    return success_response(await CustomerService(db, tenant_id).get_credit_summary(customer_id))

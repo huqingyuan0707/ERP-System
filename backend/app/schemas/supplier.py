@@ -3,7 +3,13 @@
 from datetime import datetime  # 日期时间类型，用来声明供应商的创建时间。
 from decimal import Decimal  # 定点数类型，应付余额用金额类型避免浮点误差。
 
-from pydantic import BaseModel, ConfigDict, Field  # 模型基类、模型配置和字段校验规则。
+from pydantic import (  # 模型基类、模型配置和字段校验规则。
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+)
 
 from app.schemas.common import PageQuery, to_camel  # 复用分页参数和驼峰别名转换函数。
 
@@ -54,6 +60,14 @@ class SupplierUpdate(BaseModel):  # 单独声明更新模型，避免继承新�
     credit_days: int | None = Field(default=None, ge=0)  # 账期不能为负；未传表示不修改账期。
     status: int | None = Field(default=None, ge=0, le=1)  # 不默认启用，避免意外修改原状态。
     remark: str | None = Field(default=None, max_length=255)  # 未传保留备注，传 None 可请求清空。
+
+    @field_validator("code", "name", "credit_days", "status", mode="before")
+    @classmethod
+    def reject_explicit_null(cls, value: object, info: ValidationInfo) -> object:
+        """省略字段保持原值，显式 null 不得写入非空列。"""
+        if value is None:
+            raise ValueError(f"{info.field_name} 不能为 null")
+        return value
 
 
 class SupplierOut(BaseModel):  # 定义对外返回的数据结构，不直接把整条数据库记录返回给前端。
