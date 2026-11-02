@@ -52,13 +52,16 @@ class ExcelWriter:
             raise ValueError("导出文件超过 256MB 资源上限，请缩小筛选范围")
 
     def close(self) -> None:
-        # write-only 未保存而发生异常时也关闭并清理临时 XML。
+        """关闭工作簿；异常路径兼容 openpyxl 的 write-only 临时 writer。"""
         for sheet in self.workbook.worksheets:
-            if not sheet.closed:
-                sheet.close()
-            writer = sheet._writer
-            if writer is not None and Path(writer.out).exists():
-                writer.cleanup()
+            close_sheet = getattr(sheet, "close", None)
+            if callable(close_sheet) and not bool(getattr(sheet, "closed", False)):
+                close_sheet()
+            writer = getattr(sheet, "_writer", None)
+            output = getattr(writer, "out", None)
+            cleanup = getattr(writer, "cleanup", None)
+            if output is not None and Path(output).exists() and callable(cleanup):
+                cleanup()
         self.workbook.close()
 
 

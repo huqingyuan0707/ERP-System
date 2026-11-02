@@ -1,9 +1,9 @@
 """库存相关 Schema。"""
 
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.common import to_camel
 
@@ -85,12 +85,43 @@ class ChangeStockIn(BaseModel):
     goods_id: int
     direction: Literal[-1, 1] = Field(description="1=入库, -1=出库")
     qty: Decimal = Field(gt=0)
-    unit_cost: Decimal = Field(default=Decimal("0"), ge=0)
-    biz_type: str
+    unit_cost: Decimal = Field(
+        default=Decimal("0"),
+        ge=0,
+        max_digits=18,
+        decimal_places=4,
+        allow_inf_nan=False,
+    )
+    biz_type: Literal[
+        "purchase_in",
+        "purchase_return",
+        "sale_out",
+        "sale_return",
+        "transfer_in",
+        "transfer_out",
+        "check_gain",
+        "check_loss",
+    ]
     source_no: str
     biz_time: str
     idempotency_key: str | None = Field(default=None, description="幂等键，防止重复提交")
     remark: str | None = None
+
+    @model_validator(mode="after")
+    def validate_direction(self) -> Self:
+        expected = {
+            "purchase_in": 1,
+            "purchase_return": -1,
+            "sale_out": -1,
+            "sale_return": 1,
+            "transfer_in": 1,
+            "transfer_out": -1,
+            "check_gain": 1,
+            "check_loss": -1,
+        }[self.biz_type]
+        if self.direction != expected:
+            raise ValueError(f"{self.biz_type} 的库存方向必须为 {expected}")
+        return self
 
 
 class ChangeStockOut(BaseModel):

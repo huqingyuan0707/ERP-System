@@ -8,7 +8,6 @@
   4. 把业务返回的结果包装成统一响应格式 {code, message, data} 返回给前端。
 """
 
-import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -87,7 +86,9 @@ async def update_user(
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("sys:user:edit"))],
 ) -> ApiResponse[UserOut]:
-    result = await UserService(db, tenant_id=tenant_id).update_user(user_id, payload, current_user.id)
+    result = await UserService(db, tenant_id=tenant_id).update_user(
+        user_id, payload, current_user.id
+    )
     return success_response(result)
 
 
@@ -110,7 +111,9 @@ async def reset_password(
     tenant_id: TenantDep,
     current_user: Annotated[SysUser, Depends(require_perm("sys:user:reset"))],
 ) -> ApiResponse[None]:
-    await UserService(db, tenant_id=tenant_id).reset_password(user_id, payload.password, current_user.id)
+    await UserService(db, tenant_id=tenant_id).reset_password(
+        user_id, payload.password, current_user.id
+    )
     return success_response(None)
 
 
@@ -137,7 +140,9 @@ async def assign_role_permissions(
     tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm("sys:role:assign"))],
 ) -> ApiResponse[None]:
-    await PermissionService(db, tenant_id=tenant_id).assign_role_permissions(role_id, payload.permission_ids)
+    await PermissionService(db, tenant_id=tenant_id).assign_role_permissions(
+        role_id, payload.permission_ids
+    )
     return success_response(None)
 
 
@@ -187,7 +192,7 @@ async def update_role(
     _: Annotated[SysUser, Depends(require_perm("sys:role:edit"))],
 ) -> ApiResponse[RoleOut]:
     result = await RoleService(db, tenant_id=tenant_id).update_role(role_id, payload)
-    dept_ids = await RoleRepository(db).list_dept_ids(role_id)
+    dept_ids = await RoleRepository(db, tenant_id=tenant_id).list_dept_ids(role_id)
     out = RoleOut.model_validate(result)
     return success_response(out.model_copy(update={"dept_ids": dept_ids}))
 

@@ -13,6 +13,7 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import AsyncSessionLocal, engine
 from app.models.base_data import BdGoods, BdGoodsCategory, BdUnit, BdWarehouse
@@ -118,7 +119,14 @@ async def _seed(session: AsyncSession) -> None:
         await session.commit()
         return
 
-    dept = SysDept(name="总公司", parent_id=None, leader="系统管理员", sort=1, status=1)
+    dept = SysDept(
+        tenant_id=1,
+        name="总公司",
+        parent_id=None,
+        leader="系统管理员",
+        sort=1,
+        status=1,
+    )
     session.add(dept)
     await session.flush()
 
@@ -204,6 +212,9 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     warehouse_menu = next(menu for menu in menus if menu.perm_code == "base:warehouse:list")
     supplier_menu = next(menu for menu in menus if menu.perm_code == "base:supplier:list")
     customer_menu = next(menu for menu in menus if menu.perm_code == "base:customer:list")
+    stock_menu = next(menu for menu in menus if menu.perm_code == "inv:stock:list")
+    statement_menu = next(menu for menu in menus if menu.perm_code == "fin:statement:list")
+    report_menu = next(menu for menu in menus if menu.perm_code == "rpt:finance:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -230,6 +241,9 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("新增客户", "base:customer:add", customer_menu.id, 1),
         _button("修改客户", "base:customer:edit", customer_menu.id, 2),
         _button("删除客户", "base:customer:delete", customer_menu.id, 3),
+        _button("导出库存", "inv:stock:export", stock_menu.id, 6),
+        _button("导出通用报表", "report:export", report_menu.id, 5),
+        _button("导出对账单", "fin:statement:export", statement_menu.id, 7),
         _button("查看操作日志", "sys:log:view", user_menu.id, 6),
         _button("查看异步任务", "sys:task:view", user_menu.id, 7),
         _button("超级权限", "*", dir_sys.id, 99),
@@ -279,8 +293,22 @@ def _button(name: str, perm_code: str, parent_id: int, sort: int) -> SysPermissi
 
 
 async def _seed_roles(session: AsyncSession, permissions: list[SysPermission]) -> SysRole:
-    admin_role = SysRole(code="admin", name="超级管理员", data_scope=3, status=1, remark="内置角色")
-    viewer_role = SysRole(code="viewer", name="只读用户", data_scope=1, status=1, remark="内置角色")
+    admin_role = SysRole(
+        tenant_id=1,
+        code="admin",
+        name="超级管理员",
+        data_scope=3,
+        status=1,
+        remark="内置角色",
+    )
+    viewer_role = SysRole(
+        tenant_id=1,
+        code="viewer",
+        name="只读用户",
+        data_scope=1,
+        status=1,
+        remark="内置角色",
+    )
     session.add_all([admin_role, viewer_role])
     await session.flush()
 
@@ -306,8 +334,9 @@ async def _seed_roles(session: AsyncSession, permissions: list[SysPermission]) -
 
 async def _seed_admin(session: AsyncSession, dept_id: int, admin_role_id: int) -> None:
     admin = SysUser(
+        tenant_id=1,
         username=DEFAULT_ADMIN_USERNAME,
-        password_hash=hash_password(DEFAULT_ADMIN_PASSWORD),
+        password_hash=hash_password(settings.INITIAL_ADMIN_PASSWORD or DEFAULT_ADMIN_PASSWORD),
         real_name="系统管理员",
         dept_id=dept_id,
         position="系统管理员",
@@ -437,26 +466,36 @@ async def _ensure_permissions(session: AsyncSession) -> None:
             )
     await session.flush()
 
-    # 超级管理员默认拥有全部权限，补齐权限项后需要同步授权
-    admin_role = await session.scalar(select(SysRole).where(SysRole.code == "admin"))
-    if admin_role is None:
-        return
+    # 超级管理员默认拥有全部权限，补齐权限项后需要同步授权。
+    # 角色按租户隔离，因此不能只取任意一个 admin。
+    admin_roles = list(
+        (
+            await session.execute(
+                select(SysRole).where(SysRole.code == "admin", SysRole.is_deleted.is_(False))
+            )
+        )
+        .scalars()
+        .all()
+    )
     supplier_perms = list(
         (
             await session.execute(
                 select(SysPermission).where(SysPermission.perm_code.like("base:supplier:%"))
             )
-        ).scalars().all()
-    )
-    for perm in supplier_perms:
-        granted = await session.scalar(
-            select(SysRolePermission.role_id).where(
-                SysRolePermission.role_id == admin_role.id,
-                SysRolePermission.permission_id == perm.id,
-            )
         )
-        if granted is None:
-            session.add(SysRolePermission(role_id=admin_role.id, permission_id=perm.id))
+        .scalars()
+        .all()
+    )
+    for admin_role in admin_roles:
+        for perm in supplier_perms:
+            granted = await session.scalar(
+                select(SysRolePermission.role_id).where(
+                    SysRolePermission.role_id == admin_role.id,
+                    SysRolePermission.permission_id == perm.id,
+                )
+            )
+            if granted is None:
+                session.add(SysRolePermission(role_id=admin_role.id, permission_id=perm.id))
     await session.flush()
 
     # 客户菜单与按钮权限：首次初始化已播种菜单，这里对老库补齐菜单与按钮，并授权管理员
@@ -508,15 +547,67 @@ async def _ensure_permissions(session: AsyncSession) -> None:
             await session.execute(
                 select(SysPermission).where(SysPermission.perm_code.like("base:customer:%"))
             )
-        ).scalars().all()
-    )
-    for perm in customer_perms:
-        granted = await session.scalar(
-            select(SysRolePermission.role_id).where(
-                SysRolePermission.role_id == admin_role.id,
-                SysRolePermission.permission_id == perm.id,
-            )
         )
-        if granted is None:
-            session.add(SysRolePermission(role_id=admin_role.id, permission_id=perm.id))
+        .scalars()
+        .all()
+    )
+    for admin_role in admin_roles:
+        for perm in customer_perms:
+            granted = await session.scalar(
+                select(SysRolePermission.role_id).where(
+                    SysRolePermission.role_id == admin_role.id,
+                    SysRolePermission.permission_id == perm.id,
+                )
+            )
+            if granted is None:
+                session.add(SysRolePermission(role_id=admin_role.id, permission_id=perm.id))
+    await session.flush()
+
+    # 权限表全局共享；角色按租户隔离。新增权限必须授权给每个租户的 admin。
+    export_specs = (
+        ("导出库存", "inv:stock:export", "inv:stock:list", 6),
+        ("导出通用报表", "report:export", "rpt:finance:list", 5),
+        ("导出对账单", "fin:statement:export", "fin:statement:list", 7),
+    )
+    export_permissions: list[SysPermission] = []
+    for name, perm_code, parent_code, sort in export_specs:
+        permission = await session.scalar(
+            select(SysPermission).where(SysPermission.perm_code == perm_code)
+        )
+        if permission is None:
+            parent_id = await session.scalar(
+                select(SysPermission.id).where(SysPermission.perm_code == parent_code)
+            )
+            permission = SysPermission(
+                name=name,
+                type=3,
+                perm_code=perm_code,
+                parent_id=parent_id,
+                sort=sort,
+            )
+            session.add(permission)
+            await session.flush()
+        export_permissions.append(permission)
+
+    admin_role_ids = [role.id for role in admin_roles]
+    if admin_role_ids:
+        existing_grants = set(
+            (
+                await session.execute(
+                    select(
+                        SysRolePermission.role_id,
+                        SysRolePermission.permission_id,
+                    ).where(
+                        SysRolePermission.role_id.in_(admin_role_ids),
+                        SysRolePermission.permission_id.in_(
+                            [permission.id for permission in export_permissions]
+                        ),
+                    )
+                )
+            ).all()
+        )
+        for role_id in admin_role_ids:
+            for permission in export_permissions:
+                if (role_id, permission.id) not in existing_grants:
+                    session.add(SysRolePermission(role_id=role_id, permission_id=permission.id))
     await session.flush()

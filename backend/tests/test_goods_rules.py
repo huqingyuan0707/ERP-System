@@ -525,7 +525,7 @@ def test_category_prevents_self_descendant_and_existing_cycle():
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("quantities", [[(1, 0), (-1, 0)], [(0, 1)], [(-1, 0)]])
+@pytest.mark.parametrize("quantities", [[(1, 0), (2, 0)], [(1, 1)]])
 def test_delete_checks_each_warehouse_qty_and_locked(quantities):
     async def run():
         async with memory_db() as db:

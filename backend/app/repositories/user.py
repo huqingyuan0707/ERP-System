@@ -107,53 +107,63 @@ class UserRepository(BaseRepository[SysUser]):
     # 权限与菜单相关查询（供登录鉴权、前端动态路由使用）
     # ------------------------------------------------------------------
 
-    async def list_permission_codes(self, user_id: int) -> list[str]:
-        """查询用户拥有的全部权限码（perm_code）。
-
-        用途：登录后 /auth/me 接口返回权限码集合，前端据此决定按钮显隐。
-        原理：用户 -> 角色 -> 权限，三表连表查询，去重后返回字符串列表。
-
-        表关系：
-          sys_user_role (user_id, role_id)
-          sys_role_permission (role_id, permission_id)
-          sys_permission (id, perm_code, ...)
-        """
+    async def list_permission_codes(self, user_id: int, tenant_id: int) -> list[str]:
+        """查询用户通过当前租户启用角色拥有的有效权限码。"""
         stmt = (
             select(SysPermission.perm_code)
             .join(
                 SysRolePermission,
                 SysRolePermission.permission_id == SysPermission.id,
             )
+            .join(SysRole, SysRole.id == SysRolePermission.role_id)
             .join(SysUserRole, SysUserRole.role_id == SysRolePermission.role_id)
-            .where(SysUserRole.user_id == user_id)
-            .distinct()  # 去重，避免同一个权限码被多个角色授权时重复返回
+            .join(SysUser, SysUser.id == SysUserRole.user_id)
+            .where(
+                SysUserRole.user_id == user_id,
+                SysUser.tenant_id == tenant_id,
+                SysUser.is_deleted.is_(False),
+                SysRole.tenant_id == tenant_id,
+                SysRole.status == 1,
+                SysRole.is_deleted.is_(False),
+                SysPermission.is_deleted.is_(False),
+            )
+            .distinct()
         )
         rows = (await self.db.execute(stmt)).scalars().all()
         return [code for code in rows if code]
 
-    async def list_role_codes(self, user_id: int) -> list[str]:
-        """查询用户关联的角色 code 列表。
-
-        用途：前端展示用户当前拥有哪些角色（如 "admin"、"viewer"）。
-        """
+    async def list_role_codes(self, user_id: int, tenant_id: int) -> list[str]:
+        """查询用户在当前租户关联的启用角色 code 列表。"""
         stmt = (
             select(SysRole.code)
             .join(SysUserRole, SysUserRole.role_id == SysRole.id)
-            .where(SysUserRole.user_id == user_id)
+            .join(SysUser, SysUser.id == SysUserRole.user_id)
+            .where(
+                SysUserRole.user_id == user_id,
+                SysUser.tenant_id == tenant_id,
+                SysUser.is_deleted.is_(False),
+                SysRole.tenant_id == tenant_id,
+                SysRole.status == 1,
+                SysRole.is_deleted.is_(False),
+            )
         )
         return list((await self.db.execute(stmt)).scalars().all())
 
-    async def list_visible_menus(self, user_id: int) -> list[SysPermission]:
-        """查询用户角色可见的目录（type=1）与菜单（type=2）权限节点。
-
-        用途：登录后构建前端侧边菜单树。只返回目录和菜单，不返回按钮。
-        """
+    async def list_visible_menus(self, user_id: int, tenant_id: int) -> list[SysPermission]:
+        """查询用户通过当前租户启用角色可见的有效目录与菜单。"""
         stmt = (
             select(SysPermission)
             .join(SysRolePermission, SysRolePermission.permission_id == SysPermission.id)
+            .join(SysRole, SysRole.id == SysRolePermission.role_id)
             .join(SysUserRole, SysUserRole.role_id == SysRolePermission.role_id)
+            .join(SysUser, SysUser.id == SysUserRole.user_id)
             .where(
                 SysUserRole.user_id == user_id,
+                SysUser.tenant_id == tenant_id,
+                SysUser.is_deleted.is_(False),
+                SysRole.tenant_id == tenant_id,
+                SysRole.status == 1,
+                SysRole.is_deleted.is_(False),
                 SysPermission.type.in_((1, 2)),  # 1=目录，2=菜单，3=按钮（此处不取按钮）
                 SysPermission.is_deleted.is_(False),
             )
@@ -167,11 +177,21 @@ class UserRepository(BaseRepository[SysUser]):
     # ------------------------------------------------------------------
 
     async def list_role_ids(self, user_id: int) -> list[int]:
-        """查询用户已分配的角色 ID 列表。
-
-        用途：用户详情页面回显“该用户拥有哪些角色”。
-        """
-        stmt = select(SysUserRole.role_id).where(SysUserRole.user_id == user_id)
+        """查询当前租户用户已分配且未删除的角色 ID 列表。"""
+        if self.tenant_id is None:
+            return []
+        stmt = (
+            select(SysUserRole.role_id)
+            .join(SysUser, SysUser.id == SysUserRole.user_id)
+            .join(SysRole, SysRole.id == SysUserRole.role_id)
+            .where(
+                SysUserRole.user_id == user_id,
+                SysUser.tenant_id == self.tenant_id,
+                SysUser.is_deleted.is_(False),
+                SysRole.tenant_id == self.tenant_id,
+                SysRole.is_deleted.is_(False),
+            )
+        )
         return list((await self.db.execute(stmt)).scalars().all())
 
     async def list_role_ids_map(self, user_ids: list[int]) -> dict[int, list[int]]:
@@ -183,8 +203,17 @@ class UserRepository(BaseRepository[SysUser]):
         """
         if not user_ids:
             return {}
-        stmt = select(SysUserRole.user_id, SysUserRole.role_id).where(
-            SysUserRole.user_id.in_(user_ids)
+        stmt = (
+            select(SysUserRole.user_id, SysUserRole.role_id)
+            .join(SysUser, SysUser.id == SysUserRole.user_id)
+            .join(SysRole, SysRole.id == SysUserRole.role_id)
+            .where(
+                SysUserRole.user_id.in_(user_ids),
+                SysUser.tenant_id == self.tenant_id,
+                SysUser.is_deleted.is_(False),
+                SysRole.tenant_id == self.tenant_id,
+                SysRole.is_deleted.is_(False),
+            )
         )
         mapping: dict[int, list[int]] = {}
         for user_id, role_id in (await self.db.execute(stmt)).all():
@@ -196,27 +225,28 @@ class UserRepository(BaseRepository[SysUser]):
     # ------------------------------------------------------------------
 
     async def existing_role_ids(self, role_ids: list[int]) -> set[int]:
-        """返回真实存在且未删除的角色 ID 集合。
-
-        用途：Service 层校验前端传的 role_ids 是否都对应真实存在的角色。
-        返回的是“存在的 ID 集合”，Service 层拿前端传的 ID 做差集，就能知道哪些是不存在的。
-        """
+        """返回当前租户真实存在且未删除的角色 ID 集合。"""
         if not role_ids:
             return set()
+        if self.tenant_id is None:
+            return set()
         stmt = select(SysRole.id).where(
-            SysRole.id.in_(role_ids), SysRole.is_deleted.is_(False)
+            SysRole.id.in_(role_ids),
+            SysRole.tenant_id == self.tenant_id,
+            SysRole.is_deleted.is_(False),
         )
         return set((await self.db.execute(stmt)).scalars().all())
 
     async def existing_dept_ids(self, dept_ids: list[int]) -> set[int]:
-        """返回真实存在且未删除的部门 ID 集合。
-
-        用途：Service 层校验前端传的 dept_id 是否对应真实存在的部门。
-        """
+        """返回当前租户真实存在且未删除的部门 ID 集合。"""
         if not dept_ids:
             return set()
+        if self.tenant_id is None:
+            return set()
         stmt = select(SysDept.id).where(
-            SysDept.id.in_(dept_ids), SysDept.is_deleted.is_(False)
+            SysDept.id.in_(dept_ids),
+            SysDept.tenant_id == self.tenant_id,
+            SysDept.is_deleted.is_(False),
         )
         return set((await self.db.execute(stmt)).scalars().all())
 
@@ -225,19 +255,20 @@ class UserRepository(BaseRepository[SysUser]):
     # ------------------------------------------------------------------
 
     async def replace_roles(self, user_id: int, role_ids: list[int]) -> None:
-        """重建用户的角色关联。
-
-        用途：新增用户或编辑用户时，把前端传的 role_ids 写入 sys_user_role 表。
-
-        实现方式：
-          1. 先删除该用户已有的所有角色关联（delete）；
-          2. 再插入新的角色关联（add）；
-          3. flush 到数据库，但不 commit（commit 由 Service 层统一控制，保证事务一致性）。
-
-        注意：
-          - dict.fromkeys(role_ids) 用于去重，保持原有顺序；
-          - 如果前端传了空列表，则清空该用户的所有角色。
-        """
+        """重建当前租户用户的角色关联。"""
+        if self.tenant_id is None:
+            raise ValueError("tenant_id is required to replace user roles")
+        user_exists = await self.db.scalar(
+            select(SysUser.id).where(
+                SysUser.id == user_id,
+                SysUser.tenant_id == self.tenant_id,
+                SysUser.is_deleted.is_(False),
+            )
+        )
+        if user_exists is None:
+            raise ValueError("user does not belong to current tenant")
+        if set(role_ids) != await self.existing_role_ids(role_ids):
+            raise ValueError("role does not belong to current tenant")
         await self.db.execute(delete(SysUserRole).where(SysUserRole.user_id == user_id))
         for role_id in dict.fromkeys(role_ids):
             self.db.add(SysUserRole(user_id=user_id, role_id=role_id))

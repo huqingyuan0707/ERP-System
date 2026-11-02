@@ -3,8 +3,9 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException, ErrorCode
-from app.models.sys import SysPermission, SysRole
+from app.models.sys import SysPermission
 from app.repositories.permission import PermissionRepository
+from app.repositories.role import RoleRepository
 from app.schemas.permission import PermissionNodeOut
 
 
@@ -14,7 +15,10 @@ class PermissionService:
     def __init__(self, db: AsyncSession, tenant_id: int) -> None:
         self.db = db
         self.tenant_id = tenant_id
-        self.permissions = PermissionRepository(db, tenant_id=tenant_id)  # 权限数据访问对象（已按租户隔离）
+        self.permissions = PermissionRepository(
+            db, tenant_id=tenant_id
+        )  # 权限数据访问对象（权限本身全局共享）
+        self.roles = RoleRepository(db, tenant_id=tenant_id)
 
     async def get_tree(self) -> list[PermissionNodeOut]:
         """完整权限树（目录/菜单/按钮），供角色分配界面使用。"""
@@ -23,8 +27,8 @@ class PermissionService:
 
     async def assign_role_permissions(self, role_id: int, permission_ids: list[int]) -> None:
         """全量覆盖角色权限：校验角色与权限 id 有效后重建关联。"""
-        role = await self.db.get(SysRole, role_id)
-        if role is None or role.is_deleted:
+        role = await self.roles.get_by_id(role_id)
+        if role is None:
             raise AppException(ErrorCode.NOT_FOUND, "角色不存在")
         if permission_ids:
             existing = await self.permissions.list_existing_ids(permission_ids)

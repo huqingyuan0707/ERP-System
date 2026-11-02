@@ -21,10 +21,19 @@ else
   echo "==> 非 git 仓库，跳过同步（代码需自行同步）"
 fi
 
-# 2) 重新生成占位密钥（已有真实值则保留，不会覆盖）
-if [ -f scripts/gen-env-secrets.sh ]; then
-  bash scripts/gen-env-secrets.sh .env || true
+# 2) 重新生成占位密钥（已有真实值则保留，不会覆盖）；失败必须中止生产更新
+if [ ! -f scripts/gen-env-secrets.sh ]; then
+  echo "缺少 scripts/gen-env-secrets.sh，无法验证生产密钥" >&2
+  exit 1
 fi
+bash scripts/gen-env-secrets.sh .env
+
+# 部署前必须通过生产环境配置自检，禁止带占位密钥或 SQLite 继续更新。
+if [ ! -f scripts/check-env.sh ]; then
+  echo "缺少 scripts/check-env.sh，无法执行部署前自检" >&2
+  exit 1
+fi
+SKIP_RUNTIME_CHECKS=1 bash scripts/check-env.sh
 
 # 3) 拉取最新镜像并启动（镜像由 CI 构建推送到 ACR，服务器只拉取运行）
 read_env_value() {

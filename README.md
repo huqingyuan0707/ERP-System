@@ -75,9 +75,11 @@ Copy-Item .env.example .env
 
 | 变量 | 说明 |
 |---|---|
-| `DATABASE_URL` | 默认 PostgreSQL；本地无 PG 可改为 `sqlite+aiosqlite:///./erp.db` |
-| `REDIS_URL` | 留空则使用进程内缓存 |
-| `SECRET_KEY` | JWT 签名密钥，**上线前必须替换** |
+| `ENVIRONMENT` | `development` / `test` / `production`；生产环境会启用强制安全校验 |
+| `DATABASE_URL` | 默认 PostgreSQL；仅开发/测试可改为 `sqlite+aiosqlite:///./erp.db`，生产禁止 SQLite 与占位连接串 |
+| `REDIS_URL` | 可留空；启动日志会标记 `not configured` 并使用进程内缓存 |
+| `SECRET_KEY` | JWT 签名密钥；生产必须是至少 32 字符的强随机值，禁止占位/常见开发值 |
+| `INITIAL_ADMIN_PASSWORD` | 首次空库管理员密码；生产必填，至少 8 位且同时含字母、数字 |
 | `BACKEND_CORS_ORIGINS` | 允许的前端来源（JSON 数组） |
 
 启动：
@@ -88,7 +90,7 @@ uvicorn app.main:app --reload --port 8000
 
 首次启动会自动建表并写入种子数据（幂等）：
 
-- 默认管理员：`admin / admin123`（登录后请立即修改）
+- 默认管理员用户名：`admin`；开发环境未显式配置时保留兼容口令 `admin123`，生产环境必须通过 `INITIAL_ADMIN_PASSWORD` 提供强口令
 - 内置角色：`admin`（超级管理员）、`viewer`（只读）
 - 基础菜单与按钮权限、示例商品分类与单位
 
@@ -154,23 +156,26 @@ npm run lint                                          # ESLint
 bash scripts/deploy.sh
 ```
 
-`deploy.sh` 会自动：缺 `.env` 时从 `.env.example` 复制 → 调用 `gen-env-secrets.sh` 生成强随机密钥（仅覆盖 `change_me` 占位值）→ `docker compose up -d --build` → 轮询后端健康检查（postgres 就绪后后端自动建表 + 写入种子数据）。
+`deploy.sh` 会自动：缺 `.env` 时从 `.env.example` 复制 → 写入 `ENVIRONMENT=production` → 调用 `gen-env-secrets.sh` 为占位的 `DB_PASSWORD` / `SECRET_KEY` / `MINIO_PASSWORD` / `INITIAL_ADMIN_PASSWORD` 生成至少 256 bit 随机值 → 在启动前执行 `check-env.sh` 静态安全自检（失败即停止）→ `docker compose up -d --build` → 轮询后端健康检查。生产配置会拒绝弱密钥、SQLite、占位数据库连接串和缺失/弱初始管理员密码。
 
 ### 手动部署
 
 ```bash
-cp .env.example .env        # 再手动改 DB_PASSWORD / SECRET_KEY / MINIO_PASSWORD 为强值
+cp .env.example .env
+# 必须设置 ENVIRONMENT=production，并配置非占位 DATABASE_URL、强 SECRET_KEY 与 INITIAL_ADMIN_PASSWORD
+bash scripts/gen-env-secrets.sh .env
+SKIP_RUNTIME_CHECKS=1 bash scripts/check-env.sh   # 启动前静态校验；非 0 时禁止继续
 docker compose up -d --build
 ```
 
-启动后访问 `http://<服务器IP>/`，默认管理员 `admin / admin123`（请立即修改）。
+启动后访问 `http://<服务器IP>/`。首次登录使用部署时写入的 `INITIAL_ADMIN_PASSWORD`，登录后应立即轮换；禁止在生产保留默认口令。
 
 ### 部署辅助脚本
 
 | 脚本 | 作用 |
 |------|------|
 | `scripts/deploy.sh` | 一键：准备 `.env` + 强密钥 + 构建启动 + 健康检查 |
-| `scripts/gen-env-secrets.sh [env路径]` | 为 `.env` 生成 48 位强随机 `DB_PASSWORD`/`SECRET_KEY`/`MINIO_PASSWORD` |
+| `scripts/gen-env-secrets.sh [env路径]` | 为 `.env` 中的占位项生成至少 256 bit 随机 `DB_PASSWORD`/`SECRET_KEY`/`MINIO_PASSWORD`/`INITIAL_ADMIN_PASSWORD`，任一生成失败即退出 |
 | `scripts/setup-https.sh <域名>` | certbot 申请 Let's Encrypt 证书并启用 HTTPS（需域名 A 记录指向本机、80 端口放通） |
 | `scripts/backup.sh [保留份数]` | 停止服务前自动备份 PostgreSQL 与 Redis 数据，可保留最近 N 份（默认 7） |
 | `scripts/check-acr.sh <registry> <用户名> <密码>` | ACR 自检：登录 → 校验命名空间 → 检查 `erpa-backend`/`erpa-frontend` 仓库是否存在 |
@@ -250,7 +255,7 @@ base64 -w0 ~/.ssh/erp_deploy
 
 ### 三、服务器端准备
 
-- 项目根目录放好 `.env`（`cp .env.example .env`），并执行 `bash scripts/gen-env-secrets.sh .env` 生成强随机密钥。
+- 项目根目录放好 `.env`（`cp .env.example .env`），设置 `ENVIRONMENT=production`，并执行 `bash scripts/gen-env-secrets.sh .env` 生成强随机密钥和首次管理员密码；随后用 `SKIP_RUNTIME_CHECKS=1 bash scripts/check-env.sh` 做启动前静态校验。
 - ACR 登录凭证由 CI 以 base64 传输并写入项目根目录的 **`.acr.env`**（权限 600，不入库）；
   `scripts/update.sh` 会在 `docker compose pull` 前自动 `docker login`。手动部署时按同样格式自行创建 `.acr.env`。
 - 首次部署前在服务器上手动执行一次 `bash scripts/deploy.sh`，完成镜像构建与数据卷初始化。

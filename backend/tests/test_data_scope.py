@@ -73,7 +73,9 @@ async def _create_user(username: str, dept_id: int | None, role_ids: list[int]) 
 
 async def _create_role(code: str, data_scope: int) -> int:
     async with AsyncSessionLocal() as session:
-        role = SysRole(code=code, name=f"范围角色{code}", data_scope=data_scope, status=1, tenant_id=1)
+        role = SysRole(
+            code=code, name=f"范围角色{code}", data_scope=data_scope, status=1, tenant_id=1
+        )
         session.add(role)
         await session.commit()
         return int(role.id)
@@ -106,9 +108,7 @@ async def _cleanup(
         if user is not None:
             await session.execute(delete(SysUserRole).where(SysUserRole.user_id == user.id))
             await session.execute(delete(SysUser).where(SysUser.id == user.id))
-        await session.execute(
-            delete(SysRolePermission).where(SysRolePermission.role_id == role_id)
-        )
+        await session.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role_id))
         await session.execute(delete(SysRoleDept).where(SysRoleDept.role_id == role_id))
         await session.execute(delete(SysRole).where(SysRole.id == role_id))
         await session.execute(delete(BdGoods).where(BdGoods.name.in_(goods_names)))
@@ -118,9 +118,7 @@ async def _cleanup(
             # 先清理挂在这些部门下的用户及其角色关联（否则删部门会违反 sys_user 外键）
             await session.execute(
                 delete(SysUserRole).where(
-                    SysUserRole.user_id.in_(
-                        select(SysUser.id).where(SysUser.dept_id.in_(dept_ids))
-                    )
+                    SysUserRole.user_id.in_(select(SysUser.id).where(SysUser.dept_id.in_(dept_ids)))
                 )
             )
             await session.execute(delete(SysUser).where(SysUser.dept_id.in_(dept_ids)))
@@ -213,9 +211,7 @@ def test_apply_scope_self_dept_all() -> None:
                 ctx_all.scope = 1
                 user_dept_ctx = await resolve_scope(session, user_self)
                 user_admin_obj = (
-                    await session.execute(
-                        select(_SysUser).where(_SysUser.username == ADMIN[0])
-                    )
+                    await session.execute(select(_SysUser).where(_SysUser.username == ADMIN[0]))
                 ).scalar_one()
                 ctx_admin = await resolve_scope(session, user_admin_obj)
 
@@ -243,9 +239,7 @@ def test_apply_scope_self_dept_all() -> None:
                 ctx_b = await resolve_scope(
                     session,
                     (
-                        await session.execute(
-                            select(_SysUser).where(_SysUser.id == user_b)
-                        )
+                        await session.execute(select(_SysUser).where(_SysUser.id == user_b))
                     ).scalar_one(),
                 )
                 ctx_b.scope = 1
@@ -306,9 +300,7 @@ def test_data_scope_assign_api() -> None:
             resp = await client.get(f"{API}/sys/roles", headers=_auth(token))
             roles = resp.json()["data"]
             admin_role_id = next(r["id"] for r in roles if r["code"] == "admin")
-            resp = await client.delete(
-                f"{API}/sys/roles/{admin_role_id}", headers=_auth(token)
-            )
+            resp = await client.delete(f"{API}/sys/roles/{admin_role_id}", headers=_auth(token))
             assert resp.status_code == 400
 
     _run(_assert())

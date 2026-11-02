@@ -51,23 +51,8 @@ class InventoryService:
             stock = await self._repo.get_stock_for_update(payload.warehouse_id, payload.goods_id)
             if stock is None or stock.available_qty < payload.qty:
                 raise AppException(ErrorCode.VALIDATION_ERROR, "可用库存不足，无法锁定")
-            before_available = stock.available_qty
             stock.locked_qty += payload.qty
             stock.available_qty = stock.qty - stock.locked_qty
-            await self._repo.add_flow(
-                warehouse_id=payload.warehouse_id,
-                goods_id=payload.goods_id,
-                flow_type="lock",
-                direction=0,
-                qty=payload.qty,
-                before_qty=before_available,
-                after_qty=stock.available_qty,
-                unit_cost=stock.avg_cost,
-                source_type=payload.source_type,
-                source_no=payload.source_no,
-                biz_time=payload.biz_time,
-                remark=payload.remark or "库存锁定",
-            )
             await self._db.flush()
             result = StockOut.model_validate(stock)
             if commit:
@@ -89,23 +74,8 @@ class InventoryService:
                 raise AppException(ErrorCode.NOT_FOUND, "库存记录不存在")
             if stock.locked_qty < payload.qty:
                 raise AppException(ErrorCode.VALIDATION_ERROR, "锁定数量不足，无法释放")
-            before_available = stock.available_qty
             stock.locked_qty -= payload.qty
             stock.available_qty = stock.qty - stock.locked_qty
-            await self._repo.add_flow(
-                warehouse_id=payload.warehouse_id,
-                goods_id=payload.goods_id,
-                flow_type="unlock",
-                direction=0,
-                qty=payload.qty,
-                before_qty=before_available,
-                after_qty=stock.available_qty,
-                unit_cost=stock.avg_cost,
-                source_type=payload.source_type,
-                source_no=payload.source_no,
-                biz_time=payload.biz_time,
-                remark=payload.remark or "库存释放",
-            )
             await self._db.flush()
             result = StockOut.model_validate(stock)
             if commit:
@@ -126,7 +96,7 @@ class InventoryService:
             if stock is None:
                 stock = await self._repo.create_stock(payload.warehouse_id, payload.goods_id)
             before_qty = stock.qty
-            before_available = stock.available_qty
+            outbound_cost = stock.avg_cost
             stock.qty += payload.qty * payload.direction
             stock.available_qty = stock.qty - stock.locked_qty
             if payload.direction == 1:
@@ -138,9 +108,9 @@ class InventoryService:
                 flow_type=payload.biz_type,
                 direction=payload.direction,
                 qty=payload.qty,
-                before_qty=before_available,
-                after_qty=stock.available_qty,
-                unit_cost=payload.unit_cost,
+                before_qty=before_qty,
+                after_qty=stock.qty,
+                unit_cost=payload.unit_cost if payload.direction == 1 else outbound_cost,
                 source_type=payload.biz_type,
                 source_no=payload.source_no,
                 biz_time=payload.biz_time,

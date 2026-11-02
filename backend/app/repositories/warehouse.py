@@ -146,7 +146,7 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
             SysUser.tenant_id == self.tenant_id,
             SysUser.is_deleted.is_(False),  # 排除已删除用户，保留未删除的停用用户。
         )  # 不筛账号状态，避免停用账号后无法显示原负责人。
-        rows = (await self.db.execute(stmt)).tuples().all()  # 保留两列及其类型，便于转字典。
+        rows = (await self.db.execute(stmt)).all()  # 保留两列及其类型，便于转字典。
         return dict(rows)  # 每行的 ID 为键、姓名为值；姓名可为 None，缺失 ID 不入字典。
 
     async def list_manager_options(self, keyword: str | None = None) -> list[dict]:

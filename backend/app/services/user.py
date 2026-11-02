@@ -100,6 +100,7 @@ class UserService:
         await self._validate_dept(payload.dept_id)
         await self._validate_roles(payload.role_ids)
         user = SysUser(
+            tenant_id=self.tenant_id,
             username=payload.username,
             password_hash=hash_password(payload.password),  # 关键：只存哈希，不存明文
             real_name=payload.real_name,

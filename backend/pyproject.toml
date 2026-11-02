@@ -23,3 +23,6 @@ known_first_party = ["app"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "postgres: PostgreSQL 16 integration and concurrency tests; requires TEST_POSTGRES=1 and a dedicated test DATABASE_URL",
+]
