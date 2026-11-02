@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -189,14 +190,28 @@ class AuthService:
             raise AppException(ErrorCode.UNAUTHORIZED, "登录状态已失效，请重新登录")
         return user
 
-    async def get_permission_codes(self, user_id: int) -> list[str]:
-        return await self.users.list_permission_codes(user_id)
+    async def get_permission_codes(
+        self, user_id: int, tenant_id: int | None = None
+    ) -> list[str]:
+        """每次从数据库解析该用户当前租户的启用角色权限。"""
+        user_tenant_id = await self.db.scalar(
+            select(SysUser.tenant_id).where(
+                SysUser.id == user_id, SysUser.is_deleted.is_(False)
+            )
+        )
+        if user_tenant_id is None or (
+            tenant_id is not None and tenant_id != user_tenant_id
+        ):
+            return []
+        return await self.users.list_permission_codes(user_id, user_tenant_id)
 
     async def get_me(self, user: SysUser) -> CurrentUserOut:
         """当前用户信息：角色、权限码与可见菜单树。"""
-        roles = await self.users.list_role_codes(user.id)
-        permissions = await self.get_permission_codes(user.id)
-        menus = _build_menu_tree(await self.users.list_visible_menus(user.id))
+        roles = await self.users.list_role_codes(user.id, user.tenant_id)
+        permissions = await self.get_permission_codes(user.id, user.tenant_id)
+        menus = _build_menu_tree(
+            await self.users.list_visible_menus(user.id, user.tenant_id)
+        )
         return CurrentUserOut(
             id=user.id,
             username=user.username,

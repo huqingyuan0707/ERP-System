@@ -2,6 +2,7 @@
 #
 # 部署环境自检脚本：检查 .env / .acr.env 关键配置是否就位。
 # 用法: bash scripts/check-env.sh
+# 仅做启动前静态校验: SKIP_RUNTIME_CHECKS=1 bash scripts/check-env.sh
 # 退出码: 0 = 全部就绪；1 = 存在缺失项
 #
 # 注意：本脚本只输出“是否已配置”，绝不打印任何密钥/密码明文；
@@ -13,6 +14,8 @@
 #   ACR_REGISTRY 以 .env 为准，.env 未配置时回退读取 .acr.env
 #
 set -euo pipefail
+
+SKIP_RUNTIME_CHECKS="${SKIP_RUNTIME_CHECKS:-0}"
 
 # 镜像仓库名与标签（与 docker-compose.yml 的 image 保持一致，可用环境变量覆盖）
 BACKEND_IMAGE_REPO="${BACKEND_IMAGE_REPO:-erpa-backend}"
@@ -99,10 +102,28 @@ valid_registry() {
   printf '%s' "$1" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]+)?(/[A-Za-z0-9._-]+)?$'
 }
 valid_secret_key() {
-  [ "${#1}" -ge 32 ]
+  local normalized
+  [ "${#1}" -ge 32 ] || return 1
+  normalized="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "$normalized" in
+    change_me|change-me|changeme|secret|secret-key|dev-secret|dev-secret-key|\
+    development-secret|development-secret-key|development-only-secret-key|\
+    development-secret-key-change-me|isolated-test-secret-not-for-deployment|\
+    test-secret|test-secret-key|your-secret-key)
+      return 1 ;;
+  esac
 }
 valid_password() {
   [ "${#1}" -ge 8 ] && [ "$1" != "change_me" ] && ! printf '%s' "$1" | grep -q '[[:space:]]'
+}
+valid_environment() {
+  [ "$1" = "production" ]
+}
+valid_database_url() {
+  [ -n "$1" ] && ! printf '%s' "$1" | grep -Eiq 'change_me|^sqlite'
+}
+valid_admin_password() {
+  [ "${#1}" -ge 8 ] && printf '%s' "$1" | grep -Eq '[A-Za-z]' && printf '%s' "$1" | grep -Eq '[0-9]'
 }
 # 仍是模板占位值时不算就绪
 not_placeholder() {
@@ -143,6 +164,8 @@ check_file() {
 }
 
 echo "==> 检查关键配置 ..."
+check_file .env ENVIRONMENT valid_environment
+check_file .env DATABASE_URL valid_database_url
 # ACR_REGISTRY：.env 优先（docker-compose 直接使用），未配置时才看 .acr.env；
 # 两者都没有才算缺失，避免同一项在两处重复检查造成误报
 registry_value="$(get_value .env ACR_REGISTRY)"
@@ -163,6 +186,13 @@ else
 fi
 check_file .env DB_PASSWORD valid_password
 check_file .env SECRET_KEY valid_secret_key
+check_file .env INITIAL_ADMIN_PASSWORD valid_admin_password
+redis_value="$(get_value .env REDIS_URL)"
+if [ -n "$redis_value" ]; then
+  echo "[就绪] .env 中 REDIS_URL 已配置"
+else
+  warn "[提示] .env 中 REDIS_URL 未配置（not configured），后端将使用进程内缓存"
+fi
 check_file .acr.env ACR_USERNAME "" optional
 check_file .acr.env ACR_PASSWORD "" optional
 
@@ -182,8 +212,11 @@ repo_from_image() {
   printf '%s' "${name%%:*}"
 }
 
-echo "==> 检查 Docker 镜像仓库连通性 ..."
-# registry 复用上面已取到的 ACR_REGISTRY（.env 优先、.acr.env 回退），避免两处取值逻辑不一致
+if [ "$SKIP_RUNTIME_CHECKS" = "1" ]; then
+  warn "==> 已跳过镜像连通性与容器状态检查（仅执行部署前静态配置校验）"
+else
+  echo "==> 检查 Docker 镜像仓库连通性 ..."
+  # registry 复用上面已取到的 ACR_REGISTRY（.env 优先、.acr.env 回退），避免两处取值逻辑不一致
 registry="$registry_value"
 registry="${registry#http://}"
 registry="${registry#https://}"
@@ -290,6 +323,7 @@ else
     warn "[提示] 没有正在运行的容器"
   fi
   rm -f "$err_file" "$ids_file"
+fi
 fi
 
 echo "==> 检查密钥文件权限与 git 跟踪 ..."

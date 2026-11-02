@@ -25,10 +25,13 @@ INV_LOCK_STOCK_PERM = "inv:stock:lock"
 INV_UNLOCK_STOCK_PERM = "inv:stock:unlock"
 
 
-def _key(header: str | None, body: str | None) -> str | None:
+def _key(header: str | None, body: str | None) -> str:
     if header and body and header != body:
         raise AppException(ErrorCode.VALIDATION_ERROR, "请求头与请求体幂等键不一致")
-    return header or body
+    key = header or body
+    if key is None:
+        raise AppException(ErrorCode.VALIDATION_ERROR, "库存写操作必须提供 Idempotency-Key")
+    return key
 
 
 @router.post("/stocks/change")
@@ -46,7 +49,7 @@ async def change_stock(
 
     result = await IdempotencyService(db).execute(
         tenant_id=tenant_id,
-        user_id=current_user.id,
+        user_id=0,
         biz_type="change_stock",
         idempotency_key=_key(idempotency_key, payload.idempotency_key),
         request_body=payload.model_dump(mode="json", exclude={"idempotency_key"}),
@@ -70,7 +73,7 @@ async def lock_stock(
 
     result = await IdempotencyService(db).execute(
         tenant_id=tenant_id,
-        user_id=current_user.id,
+        user_id=0,
         biz_type="lock_stock",
         idempotency_key=_key(idempotency_key, payload.idempotency_key),
         request_body=payload.model_dump(mode="json", exclude={"idempotency_key"}),
@@ -94,7 +97,7 @@ async def unlock_stock(
 
     result = await IdempotencyService(db).execute(
         tenant_id=tenant_id,
-        user_id=current_user.id,
+        user_id=0,
         biz_type="unlock_stock",
         idempotency_key=_key(idempotency_key, payload.idempotency_key),
         request_body=payload.model_dump(mode="json", exclude={"idempotency_key"}),

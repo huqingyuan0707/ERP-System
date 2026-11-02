@@ -429,8 +429,11 @@ def test_success_without_revision_is_not_treated_as_migrated(monkeypatch):
 
 
 def test_head_lookup_is_independent_of_working_directory(monkeypatch, tmp_path):
+    from alembic.script import ScriptDirectory
+
     monkeypatch.chdir(tmp_path)
-    assert bootstrap._alembic_head() == migration.revision
+    script = ScriptDirectory.from_config(bootstrap._alembic_config())
+    assert bootstrap._alembic_head() == script.get_current_head()
     assert migration.down_revision == "e4a8b7c6d5f4"
 
 

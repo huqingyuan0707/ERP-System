@@ -9,16 +9,7 @@
 
 from decimal import Decimal
 
-from sqlalchemy import (
-    DateTime,
-    ForeignKey,
-    Index,
-    Integer,
-    Numeric,
-    String,
-    Text,
-    func,
-)
+from sqlalchemy import ForeignKey, Index, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -39,7 +30,9 @@ class FinAccount(TenantMixin, TimestampMixin, UserMixin, Base):
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
     code: Mapped[str] = mapped_column(String(32), nullable=False, comment="科目编码，如 1001、1102")
-    name: Mapped[str] = mapped_column(String(128), nullable=False, comment="科目名称，如 库存商品、应付账款")
+    name: Mapped[str] = mapped_column(
+        String(128), nullable=False, comment="科目名称，如 库存商品、应付账款"
+    )
     parent_id: Mapped[int | None] = mapped_column(
         BIGINT_PK, ForeignKey("fin_account.id"), nullable=True, comment="父科目 ID"
     )
@@ -95,9 +88,7 @@ class FinVoucher(TenantMixin, TimestampMixin, UserMixin, Base):
     source_type: Mapped[str | None] = mapped_column(
         String(32), comment="来源单据类型，如 purchase_in、sale_out"
     )
-    source_no: Mapped[str | None] = mapped_column(
-        String(64), comment="来源单号"
-    )
+    source_no: Mapped[str | None] = mapped_column(String(64), comment="来源单号")
     remark: Mapped[str | None] = mapped_column(String(255), comment="备注")
 
 
@@ -166,18 +157,15 @@ class ArApRecord(TenantMixin, TimestampMixin, UserMixin, Base):
     source_type: Mapped[str] = mapped_column(
         String(32), nullable=False, comment="来源单据类型，如 purchase_in、sale_out"
     )
-    source_no: Mapped[str] = mapped_column(
-        String(64), nullable=False, comment="来源单号"
-    )
-    amount: Mapped[Decimal] = mapped_column(
-        Numeric(18, 4), nullable=False, comment="金额"
-    )
-    currency: Mapped[str] = mapped_column(
-        String(8), default="CNY", nullable=False, comment="币种"
-    )
+    source_no: Mapped[str] = mapped_column(String(64), nullable=False, comment="来源单号")
+    amount: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False, comment="金额")
+    currency: Mapped[str] = mapped_column(String(8), default="CNY", nullable=False, comment="币种")
     # 状态：1=未对账，2=部分对账，3=已对账，4=作废
     status: Mapped[int] = mapped_column(
-        Integer, default=1, nullable=False, comment="对账状态：1=未对账，2=部分对账，3=已对账，4=作废"
+        Integer,
+        default=1,
+        nullable=False,
+        comment="对账状态：1=未对账，2=部分对账，3=已对账，4=作废",
     )
     reconciled_amount: Mapped[Decimal] = mapped_column(
         Numeric(18, 4), default=0, nullable=False, comment="已对账金额"

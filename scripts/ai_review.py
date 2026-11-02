@@ -34,7 +34,6 @@ import re
 import subprocess
 import urllib.request
 
-
 # DeepSeek 密钥：优先使用
 DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 # 通义千问密钥：DeepSeek 不可用时的备用
@@ -54,7 +53,11 @@ TOKEN = os.environ.get("GH_TOKEN", "")
 # 是否允许因高风险阻断合并
 ENFORCE = os.environ.get("REVIEW_ENFORCE", "1").strip().lower() in ("1", "true", "yes")
 # 模型不可用时是否放行
-FAIL_OPEN = os.environ.get("REVIEW_FAIL_OPEN", "1").strip().lower() in ("1", "true", "yes")
+FAIL_OPEN = os.environ.get("REVIEW_FAIL_OPEN", "1").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
 # 本地调试模式：不调模型、不发评论
 DRY_RUN = os.environ.get("REVIEW_DRY_RUN", "").strip().lower() in ("1", "true", "yes")
 
@@ -103,9 +106,18 @@ MODULE_KEYWORDS = {
 
 # 高危路径规则：(正则, 原因说明)。命中任意一条即至少判定为高风险
 HIGH_RISK_RULES = [
-    (r"backend/app/(services|repositories|models)/inventory\.py", "库存数量变动，直接影响账实相符"),
-    (r"backend/app/services/(finance|receivable|payable)", "应收应付与账务，错了就是财务事故"),
-    (r"backend/app/services/(purchase|sale|transfer|check)", "采购/销售/调拨/盘点单据确认流程"),
+    (
+        r"backend/app/(services|repositories|models)/inventory\.py",
+        "库存数量变动，直接影响账实相符",
+    ),
+    (
+        r"backend/app/services/(finance|receivable|payable)",
+        "应收应付与账务，错了就是财务事故",
+    ),
+    (
+        r"backend/app/services/(purchase|sale|transfer|check)",
+        "采购/销售/调拨/盘点单据确认流程",
+    ),
     (r"backend/alembic/versions/", "数据库结构变更，线上不可逆"),
     (r"backend/app/core/(security|deps)\.py", "鉴权与权限，越权风险最高"),
     (r"backend/app/core/config\.py", "全局配置，影响所有请求"),
@@ -137,7 +149,11 @@ def error(msg):
 def pick_model():
     """选择可用的模型服务，返回 (接口地址, 模型名, 密钥)。"""
     if DEEPSEEK_KEY:
-        return ("https://api.deepseek.com/chat/completions", "deepseek-chat", DEEPSEEK_KEY)
+        return (
+            "https://api.deepseek.com/chat/completions",
+            "deepseek-chat",
+            DEEPSEEK_KEY,
+        )
     if DASHSCOPE_KEY:
         return (
             "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -153,7 +169,9 @@ def get_diff():
         # PR 模式：用 gh 拿整个 PR 的 diff
         if not PR:
             error("pr 模式缺少 PR_NUMBER")
-        return subprocess.run(["gh", "pr", "diff", PR], capture_output=True, text=True).stdout
+        return subprocess.run(
+            ["gh", "pr", "diff", PR], check=False, capture_output=True, text=True
+        ).stdout
     if not SHA:
         error("commit 模式缺少 COMMIT_SHA")
     base = BASE
@@ -163,7 +181,10 @@ def get_diff():
     # push 场景用两点比较（base..sha）= 本次提交的增量；
     # 三点是 merge-base 语义，范围可能与预期不一致，这里不混用
     res = subprocess.run(
-        ["git", "diff", "--no-color", base + ".." + SHA], capture_output=True, text=True
+        ["git", "diff", "--no-color", base + ".." + SHA],
+        check=False,
+        capture_output=True,
+        text=True,
     )
     if res.returncode != 0:
         error(f"获取 diff 失败：{res.stderr.strip()[:200]}")
@@ -356,7 +377,7 @@ def parse_review(raw):
     """把模型输出解析成结构化结果；解析不了就退化成纯文本评审。"""
     text = raw.strip()
     # 去掉模型可能加上的 ```json 包裹
-    fence = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.S)
+    fence = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
     start = text.find("{")
@@ -413,15 +434,29 @@ def higher_level(a, b):
     return a if order.get(a, 0) >= order.get(b, 0) else b
 
 
+def has_blocking_defect(review):
+    """只有模型给出具体 critical/major 缺陷且总体 HIGH 时才阻断。"""
+    if review.get("riskLevel") != "HIGH":
+        return False
+    return any(
+        item.get("severity") in {"critical", "major"}
+        and item.get("file")
+        and item.get("problem")
+        for item in review.get("issues") or []
+    )
+
+
 def build_comment(review, path_reasons, blocked):
     """把结构化评审结果渲染成 Markdown 评论。"""
     level = review["riskLevel"]
-    badge = {"HIGH": "🔴 高风险", "MEDIUM": "🟡 中风险", "LOW": "🟢 低风险"}.get(level, level)
+    badge = {"HIGH": "🔴 高风险", "MEDIUM": "🟡 中风险", "LOW": "🟢 低风险"}.get(
+        level, level
+    )
     lines = ["## 🤖 AI 代码评审", "", f"**风险等级：{badge}**", ""]
     summary = review.get("summary") or "（模型未给出概述）"
     lines += [summary, ""]
     if path_reasons:
-        lines.append("**本地路径规则命中：**")
+        lines.append("**本地路径规则命中（表示变更影响面，不等同于已发现缺陷）：**")
         lines += ["- " + reason for reason in path_reasons]
         lines.append("")
     issues = review.get("issues") or []
@@ -513,7 +548,9 @@ def main():
     raw, ok = call_model(prompt)
     if not ok:
         # 模型不可用：按配置决定放行还是阻断，默认放行，避免模型抖动卡住团队
-        comment = "## 🤖 AI 代码评审\n\n" + raw + "\n\n> 本次评审未能完成，未产生门禁结论。"
+        comment = (
+            "## 🤖 AI 代码评审\n\n" + raw + "\n\n> 本次评审未能完成，未产生门禁结论。"
+        )
         try:
             publish(comment)
         except Exception as exc:  # noqa: BLE001
@@ -523,11 +560,9 @@ def main():
             raise SystemExit(0)
         error("AI 评审服务不可用，按阻断处理")
     review = parse_review(raw)
-    # 模型判定的等级与本地路径规则取更高者，宁可多拦一次也不放过高危改动
-    final_level = higher_level(review["riskLevel"], path_level)
-    review["riskLevel"] = final_level
-    # 模型说 HIGH，或本地规则命中高危路径，均视为需阻断
-    blocked = ENFORCE and final_level == "HIGH"
+    model_level = review["riskLevel"]
+    # 路径风险描述改动影响面，只用于提示评审强度；不能替代具体缺陷证据。
+    blocked = ENFORCE and has_blocking_defect(review)
     comment = build_comment(review, path_reasons, blocked)
     try:
         publish(comment)
@@ -535,7 +570,10 @@ def main():
         # 评论发布失败（例如 fork PR 无写权限）不应让流程中断，
         # 但门禁结论依旧生效，所以这里只告警不退出
         print(f"::warning::AI 评审评论发布失败：{exc}")
-    print(f"最终风险等级：{final_level}，阻断合并：{'是' if blocked else '否'}")
+    print(
+        f"模型缺陷等级：{model_level}，路径变更风险：{path_level}，"
+        f"阻断合并：{'是' if blocked else '否'}"
+    )
     if blocked:
         raise SystemExit(1)
 

@@ -2,7 +2,7 @@
 
 from sqlalchemy import delete, select
 
-from app.models.sys import SysPermission, SysRolePermission
+from app.models.sys import SysPermission, SysRole, SysRolePermission
 from app.repositories.base import BaseRepository
 
 
@@ -31,7 +31,18 @@ class PermissionRepository(BaseRepository[SysPermission]):
         return set((await self.db.execute(stmt)).scalars().all())
 
     async def replace_role_permissions(self, role_id: int, permission_ids: list[int]) -> None:
-        """重建角色的权限关联。"""
+        """重建当前租户角色的权限关联。"""
+        if self.tenant_id is None:
+            raise ValueError("tenant_id is required to replace role permissions")
+        role_exists = await self.db.scalar(
+            select(SysRole.id).where(
+                SysRole.id == role_id,
+                SysRole.tenant_id == self.tenant_id,
+                SysRole.is_deleted.is_(False),
+            )
+        )
+        if role_exists is None:
+            raise ValueError("role does not belong to current tenant")
         await self.db.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role_id))
         for permission_id in dict.fromkeys(permission_ids):
             self.db.add(SysRolePermission(role_id=role_id, permission_id=permission_id))

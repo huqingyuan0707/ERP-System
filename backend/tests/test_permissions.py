@@ -69,9 +69,11 @@ async def _create_role_with_perms(codes: list[str]) -> int:
         session.add(role)
         await session.flush()
         perm_ids = (
-            (await session.execute(
-                select(SysPermission.id).where(SysPermission.perm_code.in_(codes))
-            ))
+            (
+                await session.execute(
+                    select(SysPermission.id).where(SysPermission.perm_code.in_(codes))
+                )
+            )
             .scalars()
             .all()
         )
@@ -107,9 +109,7 @@ async def _cleanup(username: str, role_id: int) -> None:
         if user is not None:
             await session.execute(delete(SysUserRole).where(SysUserRole.user_id == user.id))
             await session.execute(delete(SysUser).where(SysUser.id == user.id))
-        await session.execute(
-            delete(SysRolePermission).where(SysRolePermission.role_id == role_id)
-        )
+        await session.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role_id))
         await session.execute(delete(SysRole).where(SysRole.id == role_id))
         await session.commit()
 
@@ -237,8 +237,7 @@ def test_role_permission_reassign_syncs() -> None:
                 )
                 assert resp.status_code == 200, resp.text
 
-                # 重新登录后菜单与按钮权限同步
-                token = await _login_token(client, username, PASSWORD)
+                # 同一 access token 的下一请求必须直接从数据库读取新权限。
                 me = await _get_me(client, token)
                 assert _menu_names(me["menus"]) == ["基础资料"]
                 assert _menu_names(me["menus"][0]["children"]) == ["商品管理"]
@@ -246,6 +245,40 @@ def test_role_permission_reassign_syncs() -> None:
                 assert "pur:order:list" not in me["permissions"]
 
         _run(_assert_and_reassign())
+    finally:
+        _run(_cleanup(username, role_id))
+
+
+def test_disabled_role_loses_permissions_on_next_request() -> None:
+    """角色禁用后，既有 access token 下一请求立即失去角色、菜单与权限。"""
+    username = _new_username()
+    role_id = _run(_create_role_with_perms(["base:goods:list"]))
+    try:
+        _run(_create_user_with_role(username, role_id))
+
+        async def _assert_disabled_role() -> None:
+            async with _client() as client:
+                token = await _login_token(client, username, PASSWORD)
+                me = await _get_me(client, token)
+                assert "base:goods:list" in me["permissions"]
+
+                async with AsyncSessionLocal() as session:
+                    role = await session.get(SysRole, role_id)
+                    assert role is not None
+                    role.status = 0
+                    await session.commit()
+
+                me = await _get_me(client, token)
+                assert me["roles"] == []
+                assert me["permissions"] == []
+                assert me["menus"] == []
+                response = await client.get(
+                    f"{API}/base/goods",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert response.status_code == 403
+
+        _run(_assert_disabled_role())
     finally:
         _run(_cleanup(username, role_id))
 
@@ -301,6 +334,9 @@ def test_permission_tree() -> None:
             assert "sys:user:add" in codes
             assert "rpt:dashboard:list" in codes
             assert "sys:role:assign" in codes
+            assert "inv:stock:export" in codes
+            assert "report:export" in codes
+            assert "fin:statement:export" in codes
 
     _run(_assert_tree())
 

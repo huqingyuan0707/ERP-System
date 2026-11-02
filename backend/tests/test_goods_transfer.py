@@ -21,7 +21,7 @@ from app.models.base_data import BdGoods, BdGoodsCategory, BdUnit, BdWarehouse
 from app.models.inventory import InvStock
 from app.models.sys import SysOperLog, SysTask, SysUser
 from app.schemas.goods import GoodsQuery
-from app.schemas.task import TaskQuery
+from app.schemas.task import TaskOut, TaskQuery
 from app.services import excel_export
 from app.services.auth import AuthService
 from app.services.excel_export import ExcelExportService
@@ -386,6 +386,76 @@ def test_task_owner_admin_tenant_and_exact_file_lookup(tmp_path):
     asyncio.run(scenario())
 
 
+def test_export_endpoints_enforce_exact_permissions(monkeypatch):
+    """四类导出分别校验独立权限码；服务 mock 后有权限返回 200。"""
+    calls: list[str] = []
+
+    async def export_goods(self, created_by, query):
+        calls.append("goods")
+        return _task_out("goods_export")
+
+    async def export_stocks(self, created_by, warehouse_id=None, keyword=None):
+        calls.append("stock")
+        return _task_out("stock_export")
+
+    async def export_report(self, created_by, report_type):
+        calls.append("report")
+        return _task_out("report_export")
+
+    async def export_statement(self, created_by, statement_id):
+        calls.append("statement")
+        return _task_out("statement_export")
+
+    monkeypatch.setattr(ExcelExportService, "export_goods", export_goods)
+    monkeypatch.setattr(ExcelExportService, "export_stocks", export_stocks)
+    monkeypatch.setattr(ExcelExportService, "export_report", export_report)
+    monkeypatch.setattr(ExcelExportService, "export_statement", export_statement)
+
+    async def scenario():
+        async with memory_db() as db:
+            api = FastAPI()
+            api.include_router(export_api.router)
+            register_exception_handlers(api)
+            api.dependency_overrides[get_db] = lambda: db
+            api.dependency_overrides[get_current_user] = lambda: SysUser(
+                id=11, tenant_id=1, username="owner", password_hash="unused"
+            )
+            api.dependency_overrides[get_current_tenant] = lambda: 1
+            granted: set[str] = set()
+
+            async def permissions(self, user_id, tenant_id=None):
+                return sorted(granted)
+
+            monkeypatch.setattr(AuthService, "get_permission_codes", permissions)
+            routes = [
+                ("GET", "/base/goods/export", "base:goods:export", "goods"),
+                ("GET", "/inventory/stocks/export", "inv:stock:export", "stock"),
+                ("POST", "/reports/export?report_type=finance", "report:export", "report"),
+                (
+                    "GET",
+                    "/finance/statements/7/export",
+                    "fin:statement:export",
+                    "statement",
+                ),
+            ]
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=api), base_url="http://test"
+            ) as client:
+                for method, path, permission, marker in routes:
+                    granted.clear()
+                    assert (await client.request(method, path)).status_code == 403
+                    granted.add(permission)
+                    response = await client.request(method, path)
+                    assert response.status_code == 200, response.text
+                    assert calls[-1] == marker
+
+    asyncio.run(scenario())
+
+
+def _task_out(task_type: str) -> TaskOut:
+    return TaskOut(id=1, task_id=f"{task_type}-id", task_type=task_type, status=1)
+
+
 def test_http_owner_routes_template_filename_and_xls_rejection(tmp_path, monkeypatch):
     monkeypatch.setattr(task_api, "EXPORT_DIR", tmp_path)
 
@@ -414,7 +484,7 @@ def test_http_owner_routes_template_filename_and_xls_rejection(tmp_path, monkeyp
             )
             app.dependency_overrides[get_current_tenant] = lambda: 1
 
-            async def permissions(self, user_id):
+            async def permissions(self, user_id, tenant_id=None):
                 return ["base:goods:import", "base:goods:export"]
 
             monkeypatch.setattr(AuthService, "get_permission_codes", permissions)

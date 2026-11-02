@@ -1,10 +1,11 @@
 """角色服务：CRUD 与数据范围分配。"""
 
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException, ErrorCode
-from app.models.sys import SysRole
+from app.models.sys import SysDept, SysRole
 from app.repositories.role import RoleRepository
 from app.schemas.role import DataScopeAssign, RoleCreate, RoleUpdate
 
@@ -39,6 +40,7 @@ class RoleService:
         if await self._repo.get_by_code(payload.code) is not None:
             raise AppException(ErrorCode.CONFLICT, f"角色编码 {payload.code} 已存在")
         entity = SysRole(
+            tenant_id=self.tenant_id,
             code=payload.code,
             name=payload.name,
             data_scope=payload.dataScope,
@@ -79,12 +81,10 @@ class RoleService:
         entity = await self._get_role(role_id)
         entity.data_scope = payload.dataScope
         if payload.dataScope == 2 and payload.deptIds:
-            from sqlalchemy import select
-
-            from app.models.sys import SysDept
-
             stmt = select(SysDept.id).where(
-                SysDept.id.in_(payload.deptIds), SysDept.is_deleted.is_(False)
+                SysDept.id.in_(payload.deptIds),
+                SysDept.tenant_id == self.tenant_id,
+                SysDept.is_deleted.is_(False),
             )
             found = set((await self._db.execute(stmt)).scalars().all())
             missing = [d for d in payload.deptIds if d not in found]

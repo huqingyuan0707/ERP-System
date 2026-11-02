@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Index, Integer, Numeric, String, text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -42,13 +42,26 @@ class InvStock(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantM
         Numeric(18, 4), default=0, nullable=False
     )  # 锁定数量
     available_qty: Mapped[Decimal] = mapped_column(
-        Numeric(18, 4), default=0, nullable=False
+        Numeric(18, 4),
+        default=lambda context: (
+            context.get_current_parameters().get("qty", Decimal("0"))
+            - context.get_current_parameters().get("locked_qty", Decimal("0"))
+        ),
+        nullable=False,
     )  # 可用数量 = qty - locked_qty
     avg_cost: Mapped[Decimal] = mapped_column(
         Numeric(18, 4), default=0, nullable=False
     )  # 移动加权平均成本
 
     __table_args__ = (
+        CheckConstraint("qty >= 0", name="ck_inv_stock_qty_nonnegative"),
+        CheckConstraint("locked_qty >= 0", name="ck_inv_stock_locked_qty_nonnegative"),
+        CheckConstraint("available_qty >= 0", name="ck_inv_stock_available_qty_nonnegative"),
+        CheckConstraint(
+            "available_qty = qty - locked_qty",
+            name="ck_inv_stock_available_qty_consistent",
+        ),
+        CheckConstraint("avg_cost >= 0", name="ck_inv_stock_avg_cost_nonnegative"),
         # 同一租户下同一商品+仓库唯一（仅未删除行生效）
         Index(
             "uq_inv_stock_warehouse_goods_tenant",

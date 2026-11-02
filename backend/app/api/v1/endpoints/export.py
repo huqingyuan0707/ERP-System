@@ -33,6 +33,7 @@ EXPORT_GOODS_PERM = "base:goods:export"
 IMPORT_GOODS_PERM = "base:goods:import"
 EXPORT_STOCK_PERM = "inv:stock:export"
 EXPORT_REPORT_PERM = "report:export"
+EXPORT_STATEMENT_PERM = "fin:statement:export"
 
 # 导入文件大小上限 5MB，与前端提示保持一致
 IMPORT_MAX_SIZE = 5 * 1024 * 1024
@@ -114,7 +115,7 @@ async def export_statement(
     db: DbDep,
     current_user: CurrentUserDep,
     tenant_id: TenantDep,
-    _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))],
+    _: Annotated[SysUser, Depends(require_perm(EXPORT_STATEMENT_PERM))],
 ) -> ApiResponse[TaskOut]:
     """对账单导出：提交异步任务，返回 taskId。"""
     task = await ExcelExportService(db, tenant_id).export_statement(
@@ -132,7 +133,7 @@ async def download_export(
     fileName: str = Query(..., description="导出文件名"),
 ):
     """兼容旧文件名入口；与 taskId 下载使用同一租户/owner 权限策略。"""
-    codes = await AuthService(db).get_permission_codes(current_user.id)
+    codes = await AuthService(db).get_permission_codes(current_user.id, current_user.tenant_id)
     file_path = await TaskService(db, tenant_id).download_path(
         user_id=current_user.id,
         codes=codes,

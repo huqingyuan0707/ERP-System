@@ -17,7 +17,9 @@ class FinanceRepository:
     # ---------- 科目 ----------
 
     async def get_account(self, account_id: int) -> FinAccount | None:
-        return (await self._db.execute(select(FinAccount).where(FinAccount.id == account_id))).scalar_one_or_none()
+        return (
+            await self._db.execute(select(FinAccount).where(FinAccount.id == account_id))
+        ).scalar_one_or_none()
 
     async def get_account_by_code(self, tenant_id: int, code: str) -> FinAccount | None:
         return (
@@ -47,7 +49,9 @@ class FinanceRepository:
         return entry
 
     async def get_voucher(self, voucher_id: int) -> FinVoucher | None:
-        return (await self._db.execute(select(FinVoucher).where(FinVoucher.id == voucher_id))).scalar_one_or_none()
+        return (
+            await self._db.execute(select(FinVoucher).where(FinVoucher.id == voucher_id))
+        ).scalar_one_or_none()
 
     async def list_entries_by_voucher(self, voucher_id: int) -> list[FinEntry]:
         stmt = select(FinEntry).where(FinEntry.voucher_id == voucher_id)
@@ -69,7 +73,9 @@ class FinanceRepository:
         await self._db.refresh(record)
         return record
 
-    async def get_ar_ap_by_source(self, tenant_id: int, source_type: str, source_no: str) -> ArApRecord | None:
+    async def get_ar_ap_by_source(
+        self, tenant_id: int, source_type: str, source_no: str
+    ) -> ArApRecord | None:
         return (
             await self._db.execute(
                 select(ArApRecord).where(

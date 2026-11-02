@@ -64,7 +64,7 @@ def require_perm(perm_code: str) -> Callable[..., Awaitable[SysUser]]:
     """权限依赖工厂：require_perm("sys:user:list")。"""
 
     async def _checker(current_user: CurrentUserDep, db: DbDep) -> SysUser:
-        codes = await AuthService(db).get_permission_codes(current_user.id)
+        codes = await AuthService(db).get_permission_codes(current_user.id, current_user.tenant_id)
         if "*" not in codes and perm_code not in codes:
             raise AppException(ErrorCode.FORBIDDEN, f"缺少权限: {perm_code}")
         return current_user

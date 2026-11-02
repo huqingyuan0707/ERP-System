@@ -1,6 +1,6 @@
 """幂等键数据访问层。"""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,7 @@ class IdempotencyRepository:
         ttl_seconds: int = 86400,
     ) -> IdempotencyKey:
         """插入一条状态为“处理中”的幂等键记录。"""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         entity = IdempotencyKey(
             key=key,
             tenant_id=tenant_id,

@@ -27,6 +27,7 @@ class ScopeContext:
 
     scope: int
     user_id: int
+    tenant_id: int
     dept_id: int | None = None
     # 数据范围 2 时角色配置的自定义部门集（sys_role_dept），与用户部门子树取并集
     extra_dept_ids: list[int] = field(default_factory=list)
@@ -39,7 +40,12 @@ async def resolve_scope(db: AsyncSession, user: SysUser) -> ScopeContext:
             await db.execute(
                 select(SysRole)
                 .join(SysUserRole, SysUserRole.role_id == SysRole.id)
-                .where(SysUserRole.user_id == user.id, SysRole.is_deleted.is_(False))
+                .where(
+                    SysUserRole.user_id == user.id,
+                    SysRole.tenant_id == user.tenant_id,
+                    SysRole.status == 1,
+                    SysRole.is_deleted.is_(False),
+                )
             )
         )
         .scalars()
@@ -49,7 +55,12 @@ async def resolve_scope(db: AsyncSession, user: SysUser) -> ScopeContext:
     scope = SCOPE_SELF
     for role in roles:
         if role.code == "admin":
-            return ScopeContext(scope=SCOPE_ALL, user_id=user.id, dept_id=user.dept_id)
+            return ScopeContext(
+                scope=SCOPE_ALL,
+                user_id=user.id,
+                tenant_id=user.tenant_id,
+                dept_id=user.dept_id,
+            )
         scope = max(scope, role.data_scope)
 
     extra: list[int] = []
@@ -57,35 +68,54 @@ async def resolve_scope(db: AsyncSession, user: SysUser) -> ScopeContext:
         extra = list(
             (
                 await db.execute(
-                    select(SysRoleDept.dept_id).where(
-                        SysRoleDept.role_id.in_([r.id for r in roles])
+                    select(SysRoleDept.dept_id)
+                    .join(SysDept, SysDept.id == SysRoleDept.dept_id)
+                    .where(
+                        SysRoleDept.role_id.in_([r.id for r in roles]),
+                        SysDept.tenant_id == user.tenant_id,
+                        SysDept.is_deleted.is_(False),
                     )
                 )
             )
             .scalars()
             .all()
         )
-    return ScopeContext(scope=scope, user_id=user.id, dept_id=user.dept_id, extra_dept_ids=extra)
+    return ScopeContext(
+        scope=scope,
+        user_id=user.id,
+        tenant_id=user.tenant_id,
+        dept_id=user.dept_id,
+        extra_dept_ids=extra,
+    )
 
 
-async def _dept_subtree_ids(db: AsyncSession, dept_id: int | None) -> set[int]:
-    """部门及全部子孙部门 id（递归 CTE）。"""
+async def _dept_subtree_ids(db: AsyncSession, dept_id: int | None, tenant_id: int) -> set[int]:
+    """当前租户部门及全部未删除子孙部门 id（递归 CTE）。"""
     if dept_id is None:
         return set()
-    subtree = select(SysDept.id).where(
-        SysDept.id == dept_id, SysDept.is_deleted.is_(False)
-    ).cte(recursive=True)
+    subtree = (
+        select(SysDept.id)
+        .where(
+            SysDept.id == dept_id,
+            SysDept.tenant_id == tenant_id,
+            SysDept.is_deleted.is_(False),
+        )
+        .cte(recursive=True)
+    )
     subtree = subtree.union_all(
         select(SysDept.id)
         .join(subtree, SysDept.parent_id == subtree.c.id)
-        .where(SysDept.is_deleted.is_(False))
+        .where(
+            SysDept.tenant_id == tenant_id,
+            SysDept.is_deleted.is_(False),
+        )
     )
     return set((await db.execute(select(subtree.c.id))).scalars().all())
 
 
 async def _visible_dept_ids(db: AsyncSession, ctx: ScopeContext) -> set[int]:
     """数据范围 2 的可见部门集合：用户部门子树 ∪ 角色自定义部门。"""
-    subtree = await _dept_subtree_ids(db, ctx.dept_id)
+    subtree = await _dept_subtree_ids(db, ctx.dept_id, ctx.tenant_id)
     return subtree | set(ctx.extra_dept_ids)
 
 
@@ -121,7 +151,9 @@ async def apply_scope(
         (
             await db.execute(
                 select(SysUser.id).where(
-                    SysUser.dept_id.in_(dept_ids or {0}), SysUser.is_deleted.is_(False)
+                    SysUser.tenant_id == ctx.tenant_id,
+                    SysUser.dept_id.in_(dept_ids or {0}),
+                    SysUser.is_deleted.is_(False),
                 )
             )
         )
@@ -150,6 +182,12 @@ async def allows(
     if dept_id is not None and dept_id in dept_ids:
         return True
     if dept_id is None and created_by is not None:
-        creator_dept = await db.scalar(select(SysUser.dept_id).where(SysUser.id == created_by))
+        creator_dept = await db.scalar(
+            select(SysUser.dept_id).where(
+                SysUser.id == created_by,
+                SysUser.tenant_id == ctx.tenant_id,
+                SysUser.is_deleted.is_(False),
+            )
+        )
         return creator_dept is not None and creator_dept in dept_ids
     return False
