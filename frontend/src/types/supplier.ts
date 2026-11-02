@@ -20,7 +20,6 @@ export interface Supplier {
   payableAmount: string | number
   remark: string | null
   createdAt: string | null
-  updatedAt: string | null
 }
 
 /** 新增供应商请求体（对应后端 SupplierCreate，部分字段可选）。 */
@@ -39,7 +38,7 @@ export interface SupplierCreatePayload {
 }
 
 /** 修改供应商请求体（对应后端 SupplierUpdate，部分更新，仅传需要变更的字段）。 */
-export type SupplierUpdatePayload = Partial<SupplierCreatePayload>
+export type SupplierUpdatePayload = Partial<Omit<SupplierCreatePayload, 'code'>> & { code?: string }
 
 /** 供应商列表查询参数（对应后端 SupplierQuery）。 */
 export interface SupplierQuery extends PageQuery {

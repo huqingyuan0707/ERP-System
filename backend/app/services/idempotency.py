@@ -1,15 +1,14 @@
-"""幂等业务服务。
-
-为单据提交接口提供“先抢幂等锁、再执行业务、最后标记成功/失败”的流程。
-若幂等键已存在且状态为成功，直接返回已缓存的响应体，不重复执行业务；
-若状态为处理中/失败，允许重新尝试（覆盖旧记录）。
-"""
+"""幂等业务服务，execute 将业务写入和结果缓存置于同一事务。"""
 
 import hashlib
 import json
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.core.exceptions import AppException, ErrorCode
 from app.models.idempotency import IdempotencyKey
@@ -20,7 +19,87 @@ class IdempotencyService:
     """幂等控制：确保同一幂等键的业务操作在窗口期内只执行一次。"""
 
     def __init__(self, db) -> None:
+        self._db = db
         self._repo = IdempotencyRepository(db)
+
+    async def execute(
+        self,
+        *,
+        tenant_id: int,
+        user_id: int,
+        biz_type: str,
+        idempotency_key: str | None = None,
+        request_body: Any = None,
+        operation: Callable[[], Awaitable[Any]],
+        ttl_seconds: int = 86400,
+    ) -> Any:
+        """执行不自行提交的 operation；成功结果与业务数据原子提交，失败整体回滚。"""
+        try:
+            entity = None
+            if idempotency_key is not None:
+                idempotency_key = idempotency_key.strip()
+                if not idempotency_key or len(idempotency_key) > 128:
+                    raise AppException(ErrorCode.VALIDATION_ERROR, "幂等键须为 1 至 128 个非空字符")
+                key = self.build_key(tenant_id, user_id, biz_type, idempotency_key)
+                if len(key) > 255 or len(biz_type) > 64 or ttl_seconds <= 0:
+                    raise AppException(ErrorCode.VALIDATION_ERROR, "幂等参数超出允许范围")
+                if self._db.bind.dialect.name == "postgresql":
+                    acquired = (
+                        await self._db.execute(
+                            text("SELECT pg_try_advisory_xact_lock(hashtextextended(:key, 0))"),
+                            {"key": key},
+                        )
+                    ).scalar_one()
+                    if not acquired:
+                        raise AppException(ErrorCode.CONFLICT, "相同幂等请求正在处理中，请稍后重试")
+                existing = await self._repo.get_by_key(key)
+                if existing is not None and not self._expired(existing):
+                    if existing.request_body_hash != self.hash_body(request_body):
+                        raise AppException(
+                            ErrorCode.CONFLICT, "幂等键已被其他参数占用，请更换幂等键"
+                        )
+                    if existing.status == 1:
+                        result = await self.get_cached_response(existing)
+                        await self._db.commit()
+                        return result
+                    if existing.status == 2:
+                        raise AppException(ErrorCode.CONFLICT, "相同幂等请求正在处理中，请稍后重试")
+                if existing is not None:
+                    await self._repo.delete_by_key(key)
+                try:
+                    entity = await self._repo.create(
+                        key=key,
+                        tenant_id=tenant_id,
+                        user_id=user_id,
+                        biz_type=biz_type,
+                        biz_no=idempotency_key,
+                        request_body_hash=self.hash_body(request_body),
+                        ttl_seconds=ttl_seconds,
+                    )
+                except IntegrityError as exc:
+                    raise AppException(
+                        ErrorCode.CONFLICT, "相同幂等请求已提交，请重试获取结果"
+                    ) from exc
+            result = await operation()
+            if isinstance(result, BaseModel):
+                result = result.model_dump(mode="json", by_alias=True)
+            result = json.loads(json.dumps(result, ensure_ascii=False, allow_nan=False))
+            await self.confirm_success(entity, result)
+            await self._db.commit()
+            return result
+        except IntegrityError as exc:
+            await self._db.rollback()
+            raise AppException(ErrorCode.CONFLICT, "数据已被占用或引用，请刷新后重试") from exc
+        except BaseException:
+            await self._db.rollback()
+            raise
+
+    @staticmethod
+    def _expired(entity: IdempotencyKey) -> bool:
+        expires = entity.expires_at
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=UTC)
+        return expires <= datetime.now(UTC)
 
     @staticmethod
     def build_key(
@@ -40,11 +119,7 @@ class IdempotencyService:
         Pydantic 模型不能直接 json.dumps（会抛 TypeError），
         所以先用 model_dump(mode="json") 转成可 JSON 序列化的字典。
         """
-        if isinstance(body, BaseModel):
-            # mode="json" 保证 Decimal、datetime 等非 JSON 原生类型被转成字符串/数字
-            payload = body.model_dump(mode="json")
-        else:
-            payload = body
+        payload = body.model_dump(mode="json") if isinstance(body, BaseModel) else body
         raw = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()[:16]
 
@@ -73,7 +148,12 @@ class IdempotencyService:
         key = self.build_key(tenant_id, user_id, biz_type, idempotency_key)
         existing = await self._repo.get_by_key(key)
 
+        if existing is not None and self._expired(existing):
+            await self._repo.delete_by_key(key)
+            existing = None
         if existing is not None:
+            if existing.status == 2:
+                raise AppException(ErrorCode.CONFLICT, "相同幂等请求正在处理中，请稍后重试")
             if existing.status == 1:  # 成功
                 # 同一幂等键、不同请求体：拒绝，避免误返回错误结果
                 if (
@@ -113,7 +193,13 @@ class IdempotencyService:
         if entity is None:
             # 没有幂等记录可更新，直接返回，不影响主流程
             return
-        response_json = json.dumps(response_body, ensure_ascii=False) if response_body is not None else None
+        if isinstance(response_body, BaseModel):
+            response_body = response_body.model_dump(mode="json", by_alias=True)
+        response_json = (
+            json.dumps(response_body, ensure_ascii=False, allow_nan=False)
+            if response_body is not None
+            else None
+        )
         await self._repo.mark_success(entity, response_json)
 
     async def mark_failed(self, entity: IdempotencyKey) -> None:

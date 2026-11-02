@@ -7,6 +7,7 @@ from fastapi import APIRouter
 from app.api.v1.endpoints import (
     auth,
     configs,
+    customer,
     dicts,
     export,
     goods,
@@ -88,3 +89,4 @@ api_router.include_router(task.router)
 api_router.include_router(warehouse.router)
 api_router.include_router(inventory.router)
 api_router.include_router(supplier.router)
+api_router.include_router(customer.router)

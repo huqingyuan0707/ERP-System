@@ -143,10 +143,28 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
             return {}  # 空映射可直接交给 Service 做名称回填。
         stmt = select(SysUser.id, SysUser.real_name).where(  # 只取回填名称所需字段。
             SysUser.id.in_(user_ids),  # IN 条件一次覆盖所有传入 ID。
+            SysUser.tenant_id == self.tenant_id,
             SysUser.is_deleted.is_(False),  # 排除已删除用户，保留未删除的停用用户。
         )  # 不筛账号状态，避免停用账号后无法显示原负责人。
         rows = (await self.db.execute(stmt)).tuples().all()  # 保留两列及其类型，便于转字典。
         return dict(rows)  # 每行的 ID 为键、姓名为值；姓名可为 None，缺失 ID 不入字典。
+
+    async def list_manager_options(self, keyword: str | None = None) -> list[dict]:
+        """仓库专用最小用户选项；不暴露手机号、角色等系统用户资料。"""
+        stmt = select(SysUser.id, SysUser.real_name, SysUser.username).where(
+            SysUser.tenant_id == self.tenant_id,
+            SysUser.is_deleted.is_(False),
+            SysUser.status == 1,
+        )
+        if keyword:
+            stmt = stmt.where(
+                or_(
+                    SysUser.real_name.ilike(f"%{keyword}%"),
+                    SysUser.username.ilike(f"%{keyword}%"),
+                )
+            )
+        rows = (await self.db.execute(stmt.order_by(SysUser.id).limit(100))).all()
+        return [{"value": row.id, "label": row.real_name or row.username} for row in rows]
 
     async def has_stock(self, warehouse_id: int) -> bool:  # 查询指定仓库是否仍有库存。
         """返回仓库是否存在未删除且账面数量或锁定数量非零的库存记录。

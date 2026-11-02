@@ -1,39 +1,34 @@
-"""异步任务端点（C-07）。
+"""任务列表、轮询和下载：owner 不依赖后台任务管理权限。"""
 
-路由前缀 /sys，完整路径如：
-  GET  /api/v1/sys/tasks        任务列表
-  GET  /api/v1/sys/tasks/{id}   任务详情（前端轮询用）
-"""
+from fastapi import APIRouter, Query
+from fastapi.responses import FileResponse
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, Query
-
-from app.core.deps import CurrentUserDep, DbDep, require_perm
-from app.models.sys import SysUser
+from app.core.deps import CurrentUserDep, DbDep, TenantDep
 from app.schemas.common import ApiResponse, PageResult, success_response
 from app.schemas.task import TaskOut, TaskQuery
+from app.services.auth import AuthService
+from app.services.excel_export import EXPORT_DIR
 from app.services.task import TaskService
 
 
 router = APIRouter(prefix="/sys", tags=["异步任务"])
-
-TASK_VIEW_PERM = "sys:task:view"
 
 
 @router.get("/tasks", summary="异步任务列表")
 async def list_tasks(
     db: DbDep,
     current_user: CurrentUserDep,
-    _: Annotated[SysUser, Depends(require_perm(TASK_VIEW_PERM))],
+    tenant_id: TenantDep,
     task_type: str | None = Query(default=None, description="任务类型"),
-    status: int | None = Query(default=None, description="状态 1=待执行 2=执行中 3=成功 4=失败"),
+    status: int | None = Query(default=None, ge=1, le=4),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
 ) -> ApiResponse[PageResult[TaskOut]]:
-    """异步任务分页查询。"""
     query = TaskQuery(task_type=task_type, status=status, page=page, page_size=page_size)
-    result = await TaskService(db).list_tasks(query)
+    codes = await AuthService(db).get_permission_codes(current_user.id)
+    result = await TaskService(db, tenant_id).list_tasks(
+        query, user_id=current_user.id, codes=codes
+    )
     return success_response(result)
 
 
@@ -42,8 +37,33 @@ async def get_task(
     task_id: str,
     db: DbDep,
     current_user: CurrentUserDep,
-    _: Annotated[SysUser, Depends(require_perm(TASK_VIEW_PERM))],
+    tenant_id: TenantDep,
 ) -> ApiResponse[TaskOut]:
-    """根据 taskId 查询单条任务，前端轮询进度与下载地址。"""
-    result = await TaskService(db).get_task_by_id(task_id)
+    codes = await AuthService(db).get_permission_codes(current_user.id)
+    result = await TaskService(db, tenant_id).get_task_by_id(
+        task_id,
+        user_id=current_user.id,
+        codes=codes,
+    )
     return success_response(result)
+
+
+@router.get("/tasks/{task_id}/download", summary="下载任务文件")
+async def download_task(
+    task_id: str,
+    db: DbDep,
+    current_user: CurrentUserDep,
+    tenant_id: TenantDep,
+) -> FileResponse:
+    codes = await AuthService(db).get_permission_codes(current_user.id)
+    path = await TaskService(db, tenant_id).download_path(
+        user_id=current_user.id,
+        codes=codes,
+        export_dir=EXPORT_DIR,
+        task_id=task_id,
+    )
+    return FileResponse(
+        path=path,
+        filename=path.name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )

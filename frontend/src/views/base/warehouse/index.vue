@@ -20,6 +20,9 @@ import {
 } from '@/api/warehouse'
 import type { ManagerOption, Warehouse, WarehouseQuery } from '@/types/warehouse'
 import BaseCard from '@/components/BaseCard.vue'
+import { useUserStore } from '@/stores/user'
+
+const userStore = useUserStore()
 
 const loading = ref(false)
 const rows = ref<Warehouse[]>([])
@@ -47,10 +50,10 @@ const fetchList = async (): Promise<void> => {
   }
 }
 
-const fetchManagers = async (): Promise<void> => {
+const fetchManagers = async (keyword = ''): Promise<void> => {
   managerLoading.value = true
   try {
-    managers.value = await fetchManagerOptions()
+    managers.value = await fetchManagerOptions(keyword)
   } finally {
     managerLoading.value = false
   }
@@ -121,6 +124,9 @@ const openCreate = (): void => {
 }
 
 const openEdit = (row: Warehouse): void => {
+  if (row.managerId && !managers.value.some((m) => m.value === row.managerId)) {
+    managers.value.push({ value: row.managerId, label: row.managerName || '原负责人（暂用用户）' })
+  }
   dialogMode.value = 'edit'
   editingId.value = row.id
   Object.assign(form, {
@@ -155,7 +161,7 @@ const handleSubmit = async (): Promise<void> => {
       await createWarehouse(payload)
       ElMessage.success('新增成功')
     } else if (editingId.value !== null) {
-      await updateWarehouse(editingId.value, payload)
+      await updateWarehouse(editingId.value, { ...payload, code: form.code })
       ElMessage.success('修改成功')
     }
     dialogVisible.value = false
@@ -248,7 +254,7 @@ onMounted(() => {
           <el-table :data="rows" border stripe>
             <el-table-column prop="code" label="编码" width="120" />
             <el-table-column prop="name" label="名称" min-width="160" />
-            <el-table-column prop="managerName" label="负责人" width="120">
+            <el-table-column prop="managerName" label="负责人（用户）" width="150">
               <template #default="{ row }">{{ row.managerName || '-' }}</template>
             </el-table-column>
             <el-table-column prop="address" label="地址" min-width="160" />
@@ -262,12 +268,15 @@ onMounted(() => {
             <el-table-column label="状态" width="90" align="center">
               <template #default="{ row }">
                 <el-switch
-                  v-perm="'base:warehouse:edit'"
+                  v-if="userStore.hasPerm('base:warehouse:edit')"
                   :model-value="row.status"
-                  :active-value="1"
-                  :inactive-value="0"
+                 :active-value="1"
+                 :inactive-value="0"
                   @change="handleStatusChange(row, $event)"
                 />
+                <el-tag v-else :type="row.status === 1 ? 'success' : 'info'" size="small">
+                  {{ row.status === 1 ? '启用' : '停用' }}
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="160" fixed="right" align="center">
@@ -339,8 +348,11 @@ onMounted(() => {
             <el-form-item label="负责人">
               <el-select
                 v-model="form.managerId"
-                :disabled="managerLoading"
-                placeholder="请选择负责人（可选）"
+                :loading="managerLoading"
+                placeholder="搜索用户姓名/账号（可选）"
+                filterable
+                remote
+                :remote-method="fetchManagers"
                 clearable
                 class="full"
               >
@@ -351,14 +363,15 @@ onMounted(() => {
                   :value="m.value"
                 />
               </el-select>
+              <div class="form-tip">负责人暂用系统用户；员工档案闭环待 B06 接入。</div>
             </el-form-item>
           </el-col>
           <el-col :span="24">
             <el-form-item label="是否默认仓">
               <el-switch
                 v-model="form.isDefault"
-                active-value="true"
-                inactive-value="false"
+                :active-value="true"
+                :inactive-value="false"
                 active-text="是"
                 inactive-text="否"
               />
@@ -393,6 +406,11 @@ onMounted(() => {
 </template>
 
 <style scoped>
+.form-tip {
+  font-size: 12px;
+  color: #909399;
+}
+
 .query-form {
   margin-bottom: 0;
 }

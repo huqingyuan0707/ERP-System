@@ -1,6 +1,7 @@
 """库存相关 Schema。"""
 
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -82,9 +83,9 @@ class ChangeStockIn(BaseModel):
 
     warehouse_id: int
     goods_id: int
-    direction: int = Field(ge=-1, le=1, description="1=入库, -1=出库")
+    direction: Literal[-1, 1] = Field(description="1=入库, -1=出库")
     qty: Decimal = Field(gt=0)
-    unit_cost: Decimal = Field(default=0, ge=0)
+    unit_cost: Decimal = Field(default=Decimal("0"), ge=0)
     biz_type: str
     source_no: str
     biz_time: str

@@ -175,7 +175,7 @@ const handleSubmit = async (): Promise<void> => {
       await createSupplier(payload)
       ElMessage.success('新增成功')
     } else if (editingId.value !== null) {
-      await updateSupplier(editingId.value, payload)
+      await updateSupplier(editingId.value, { ...payload, code: form.code })
       ElMessage.success('修改成功')
     }
     dialogVisible.value = false
@@ -294,6 +294,8 @@ onMounted(() => {
             <el-table-column prop="phone" label="电话" width="130">
               <template #default="{ row }">{{ row.phone || '-' }}</template>
             </el-table-column>
+            <el-table-column prop="address" label="地址" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="remark" label="备注" min-width="140" show-overflow-tooltip />
             <el-table-column prop="taxNo" label="税号" width="150">
               <template #default="{ row }">{{ row.taxNo || '-' }}</template>
             </el-table-column>
@@ -311,12 +313,15 @@ onMounted(() => {
             <el-table-column label="状态" width="90" align="center">
               <template #default="{ row }">
                 <el-switch
-                  v-perm="'base:supplier:edit'"
+                  v-if="userStore.hasPerm('base:supplier:edit')"
                   :model-value="row.status"
                   :active-value="1"
                   :inactive-value="0"
                   @change="handleStatusChange(row, $event)"
                 />
+                <el-tag v-else :type="row.status === 1 ? 'success' : 'info'" size="small">
+                  {{ row.status === 1 ? '启用' : '停用' }}
+                </el-tag>
               </template>
             </el-table-column>
             <el-table-column label="操作" width="190" fixed="right" align="center">

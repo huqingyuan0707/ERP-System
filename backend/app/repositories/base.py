@@ -38,8 +38,12 @@ class BaseRepository(Generic[ModelT]):
         return result.scalar_one_or_none()
 
     async def add(self, obj: ModelT) -> ModelT:
-        if self.tenant_id is not None and hasattr(obj, "tenant_id") and getattr(obj, "tenant_id") is None:
-            setattr(obj, "tenant_id", self.tenant_id)  # type: ignore[attr-defined]
+        if (
+            self.tenant_id is not None
+            and hasattr(obj, "tenant_id")
+            and obj.tenant_id is None
+        ):
+            obj.tenant_id = self.tenant_id  # type: ignore[attr-defined]
         self.db.add(obj)
         await self.db.flush()
         await self.db.refresh(obj)
@@ -59,10 +63,9 @@ class BaseRepository(Generic[ModelT]):
         rows = list((await self.db.execute(rows_stmt)).scalars().all())
         return rows, total
 
-    async def paginate_rows(
-        self, stmt: Select, page: int, page_size: int
-    ) -> tuple[list[Row], int]:
-        """多列查询的分页，返回 (原始行列表, 总数)，不丢弃关联列。"""
+    async def paginate_rows(self, stmt: Select, page: int, page_size: int) -> tuple[list[Row], int]:
+        """多列查询分页，保留关联列并过滤当前租户。"""
+        stmt = self._apply_tenant_filter(stmt)
         count_stmt = select(func.count()).select_from(stmt.order_by(None).subquery())
         total = int((await self.db.execute(count_stmt)).scalar_one())
         rows_stmt = stmt.limit(page_size).offset(max(page - 1, 0) * page_size)

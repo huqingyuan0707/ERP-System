@@ -1,26 +1,25 @@
 """仓库业务逻辑：编码、负责人、默认仓、库存保护与操作日志。
 
-本层统一提交或回滚事务，仓库资料、默认标记和日志必须一起成功或一起撤销。
+默认由本层提交或回滚；commit=False 时由外层统一处理。
+仓库资料、默认标记和日志必须一起成功或一起撤销。
 停用通过部分更新 status=0 完成；删除只设置软删除标记，保留历史引用。
 """
-
-import json  # 将操作目标及默认仓变更明细写成 JSON，便于审计。
 
 from sqlalchemy.ext.asyncio import AsyncSession  # 所有仓储共用请求内的异步会话。
 
 from app.core.exceptions import AppException, ErrorCode  # 复用统一业务异常和 HTTP 错误码。
 from app.models.base_data import BdWarehouse  # 仓库 ORM 对象，仅在业务层内部使用。
-from app.models.sys import SysOperLog  # 操作日志和仓库写入同一个数据库事务。
-from app.repositories.oper_log import OperLogRepository  # 日志仓储只 flush，不单独提交。
 from app.repositories.user import UserRepository  # 校验负责人是否存在且未被软删除。
 from app.repositories.warehouse import WarehouseRepository  # 封装仓库、负责人和库存查询。
 from app.schemas.common import PageResult  # 列表统一使用项目分页结构。
 from app.schemas.warehouse import (  # 请求与返回均使用仓库专用 Schema。
     WarehouseCreate,  # 新增请求，允许省略编码。
+    WarehouseManagerOption,
     WarehouseOut,  # 返回给调用方的仓库数据，不直接暴露 ORM。
     WarehouseQuery,  # 列表的分页、关键字和状态条件。
     WarehouseUpdate,  # 部分更新请求，区分未传字段与显式传空。
 )  # Schema 已负责长度和状态范围等基础输入校验。
+from app.services.audit import write_oper_log
 from app.utils.code_gen import format_code, next_seq_from_code  # 使用统一编码工具。
 from app.utils.pagination import paginate_result  # 封装当前页数据及总条数。
 
@@ -32,13 +31,16 @@ OPER_MODULE = "基础资料"  # sys_oper_log 中记录本业务所属模块。
 class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用。
     """提供仓库查询和写操作；默认仓禁止直接取消、停用或删除，须先切换到其他仓。"""
 
-    def __init__(self, db: AsyncSession, tenant_id: int) -> None:  # 接收请求级会话与租户 ID，不创建额外事务。
+    def __init__(
+        self, db: AsyncSession, tenant_id: int
+    ) -> None:  # 接收请求级会话与租户 ID，不创建额外事务。
         """用 db 初始化全部仓储；它们共享同一事务，无返回值。"""
         self.db = db  # 提交和回滚统一由本 Service 控制。
         self.tenant_id = tenant_id  # 当前租户 ID，用于多租户数据隔离。
-        self.warehouses = WarehouseRepository(db, tenant_id=tenant_id)  # 访问仓库及关联库存，自动按租户过滤。
-        self.users = UserRepository(db)  # 检查负责人档案。
-        self.oper_logs = OperLogRepository(db)  # 写入与仓库变更绑定的审计记录。
+        self.warehouses = WarehouseRepository(
+            db, tenant_id=tenant_id
+        )  # 访问仓库及关联库存，自动按租户过滤。
+        self.users = UserRepository(db, tenant_id=tenant_id)  # 检查负责人档案。
 
     async def list_warehouses(  # 分页查询仓库并一次性补齐负责人名称。
         self,  # 使用当前仓库 Service。
@@ -67,6 +69,13 @@ class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用�
         ]  # 列表为空时仍返回合法分页结果。
         return paginate_result(items, total, query.page, query.page_size)  # 统一分页格式。
 
+    async def list_manager_options(
+        self, keyword: str | None = None
+    ) -> list[WarehouseManagerOption]:
+        """负责人暂用当前租户用户，员工闭环留待 B06。"""
+        rows = await self.warehouses.list_manager_options(keyword)
+        return [WarehouseManagerOption.model_validate(row) for row in rows]
+
     async def get_warehouse(self, warehouse_id: int) -> WarehouseOut:  # 查询单个仓库详情。
         """按 warehouse_id 返回详情和负责人姓名；不存在或已软删除时抛出 404。"""
         warehouse = await self._get_active_warehouse(warehouse_id)  # 停用但未删除的仓仍可查看。
@@ -76,6 +85,8 @@ class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用�
         self,  # 使用当前 Service 的仓储与事务。
         payload: WarehouseCreate,  # 已通过基础校验的新增资料。
         current_user_id: int,  # 写入日志和档案审计字段的操作人。
+        *,
+        commit: bool = True,
     ) -> WarehouseOut:  # 成功后返回新仓库详情。
         """用 payload 新建仓库并记录 current_user_id；返回详情，编码重复或默认仓停用抛 409。
 
@@ -104,7 +115,7 @@ class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用�
                 is_default=payload.is_default,  # 旧默认已在同一事务中取消。
                 address=payload.address,  # 地址允许未填写。
                 status=payload.status,  # 1 表示启用，0 表示停用。
-                remark=payload.remark,  # 备注仅保存，不擅自扩充出参字段。
+                remark=payload.remark,  # 备注保存并回填至出参。
                 created_by=current_user_id,  # 记录谁创建了这份档案。
                 updated_by=current_user_id,  # 初次保存的更新人同创建人。
             )  # 尚未提交，仓库和日志仍属于同一次业务操作。
@@ -118,10 +129,12 @@ class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用�
                     previous_default_ids,  # 本次取消的旧默认仓 ID 列表。
                 )  # 日志失败时不会留下没有审计记录的默认仓切换。
             result = await self._to_out(warehouse)  # 提交前完成出参校验，失败仍可整体回滚。
-            await self.db.commit()  # 仓库、旧默认标记及操作日志一次性生效。
+            if commit:
+                await self.db.commit()
             return result  # 返回已准备好的 Schema，不在提交后追加数据库查询。
         except Exception:  # 业务异常和数据库异常都必须撤销本次未完成操作。
-            await self.db.rollback()  # 恢复本事务中已经 flush 的资料、默认标记和日志。
+            if commit:
+                await self.db.rollback()
             raise  # 保留原异常，交给统一异常处理器生成响应。
 
     async def update_warehouse(  # 按实际传入字段编辑，停用也统一走这个入口。
@@ -129,6 +142,8 @@ class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用�
         warehouse_id: int,  # 本次要编辑的仓库主键。
         payload: WarehouseUpdate,  # 调用方实际提交的更新字段。
         current_user_id: int,  # 操作日志及更新人字段使用此 ID。
+        *,
+        commit: bool = True,
     ) -> WarehouseOut:  # 返回更新后的仓库详情。
         """将 payload 的已传字段更新到 warehouse_id，记录 current_user_id 后返回详情。
 
@@ -196,16 +211,20 @@ class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用�
                     previous_default_ids,  # 本次取消的旧默认仓 ID 列表。
                 )  # 与资料修改共享事务，失败时全部撤销。
             result = await self._to_out(warehouse)  # 在事务内回填最新负责人名称并验证出参。
-            await self.db.commit()  # 仓库字段、其他仓默认标记和日志一起生效。
+            if commit:
+                await self.db.commit()
             return result  # 提交成功后直接返回已生成的详情。
         except Exception:  # 包括校验、日志和数据库异常，不留半完成的编辑。
-            await self.db.rollback()  # 释放锁并撤销已经 flush 的所有本次变更。
+            if commit:
+                await self.db.rollback()
             raise  # 不吞异常，继续交给统一异常处理器。
 
     async def delete_warehouse(  # 软删除仓库，并记录操作人。
         self,  # 使用当前 Service 的会话。
         warehouse_id: int,  # 本次需要软删除的仓库主键。
         current_user_id: int,  # 执行删除的登录用户 ID。
+        *,
+        commit: bool = True,
     ) -> None:  # 删除成功不返回详情，历史资料仍在数据库中保留。
         """删除 warehouse_id 并记录 current_user_id，无返回值。
 
@@ -220,9 +239,11 @@ class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用�
             warehouse.updated_by = current_user_id  # 记录执行软删除的操作人。
             # 日志仓储只 flush，软删除标记和日志仍未提交。
             await self._write_log(current_user_id, "删除仓库", warehouse.id)
-            await self.db.commit()  # 最后由 Service 提交，Repository 不拥有业务事务。
+            if commit:
+                await self.db.commit()
         except Exception:  # 删除或日志失败时恢复原仓库状态。
-            await self.db.rollback()  # 撤销软删除标记及尚未成功的日志。
+            if commit:
+                await self.db.rollback()
             raise  # 将原始异常交给统一错误处理。
 
     async def _get_active_warehouse(  # 查询可访问的仓库，不能把停用与软删除混为一谈。
@@ -308,13 +329,11 @@ class WarehouseService:  # 汇集仓库业务规则，接口层只负责调用�
         if previous_default_ids is not None:  # 空列表也要保留，区别于没有默认仓变更。
             params["previousDefaultWarehouseIds"] = previous_default_ids  # 明确哪些旧默认仓被取消。
             params["defaultWarehouseId"] = target_id  # 明确这次设成默认的目标仓库。
-        await self.oper_logs.add(  # 只 flush，是否提交由调用它的写操作决定。
-            SysOperLog(  # 与用户管理使用同一张 sys_oper_log 表。
-                user_id=operator_id,  # 记录操作人，不使用负责人 ID 代替。
-                module=OPER_MODULE,  # 所属模块为基础资料。
-                action=action,  # 操作类型用于日志查询和审计。
-                params=json.dumps(params, ensure_ascii=False),  # 保留中文，字段名遵循 JSON 约定。
-                result="success",  # 成功日志与业务一起提交，业务失败时这条日志也回滚。
-                status=1,  # 沿用已有操作日志的成功状态约定。
-            )  # 日志异常继续向外抛出，由写操作入口回滚整个业务。
-        )  # 不在这里 commit，避免破坏调用方事务边界。
+        await write_oper_log(
+            self.db,
+            tenant_id=self.tenant_id,
+            operator_id=operator_id,
+            action=action,
+            params=params,
+            module=OPER_MODULE,
+        )

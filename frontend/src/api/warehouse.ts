@@ -9,34 +9,19 @@ import type {
   WarehouseQuery,
   WarehouseUpdatePayload,
 } from '@/types/warehouse'
-import { getUserList } from '@/api/user'
 
 export const getWarehouseList = (params: WarehouseQuery): Promise<PageResult<Warehouse>> =>
   request({ url: '/base/warehouses', method: 'get', params })
 
-export const createWarehouse = (payload: WarehouseCreatePayload): Promise<Warehouse> =>
-  request({ url: '/base/warehouses', method: 'post', data: payload })
+export const createWarehouse = (payload: WarehouseCreatePayload, idempotencyKey?: string): Promise<Warehouse> =>
+  request({ url: '/base/warehouses', method: 'post', data: payload, headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })
 
-export const updateWarehouse = (id: number, payload: WarehouseUpdatePayload): Promise<Warehouse> =>
-  request({ url: `/base/warehouses/${id}`, method: 'put', data: payload })
+export const updateWarehouse = (id: number, payload: WarehouseUpdatePayload, idempotencyKey?: string): Promise<Warehouse> =>
+  request({ url: `/base/warehouses/${id}`, method: 'put', data: payload, headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })
 
-export const deleteWarehouse = (id: number): Promise<null> =>
-  request({ url: `/base/warehouses/${id}`, method: 'delete' })
+export const deleteWarehouse = (id: number, idempotencyKey?: string): Promise<null> =>
+  request({ url: `/base/warehouses/${id}`, method: 'delete', headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })
 
-/** 获取全部未删除用户，作为仓库负责人下拉框选项。 */
-export const fetchManagerOptions = async (): Promise<ManagerOption[]> => {
-  // 后端约定 pageSize<=100，这里按 100 一页循环拉取全部启用用户
-  const pageSize = 100
-  const items: ManagerOption[] = []
-  for (let page = 1; ; page += 1) {
-    const result = await getUserList({ page, pageSize, status: 1 })
-    items.push(
-      ...result.items.map((user) => ({
-        value: user.id,
-        label: user.realName ?? user.username,
-      })),
-    )
-    if (items.length >= result.total || result.items.length === 0) break
-  }
-  return items
-}
+/** 只查询本租户最小负责人选项，不需要 sys:user:list。暂用用户，员工待 B06。 */
+export const fetchManagerOptions = (keyword?: string): Promise<ManagerOption[]> =>
+  request({ url: '/base/warehouses/manager-options', method: 'get', params: { keyword } })

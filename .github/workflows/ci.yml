@@ -9,6 +9,44 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    env:
+      # Imports must never inherit a developer/production database URL.
+      DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+      REDIS_URL: ""
+      SECRET_KEY: isolated-ci-secret-not-for-deployment
+      TESTING: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Import backend
+        working-directory: ./backend
+        run: python -c "from app.main import app; from app.db.init_db import init_db"
+
+      - name: Run tests with isolated temporary SQLite
+        working-directory: ./backend
+        run: python -m pytest tests/ -v
+
+  db-migration:
+    # A separate disposable PostgreSQL service exercises the historical chain;
+    # the SQLite unit-test matrix does not claim PostgreSQL coverage.
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16
@@ -24,31 +62,49 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql+asyncpg://erp:change_me@localhost:5432/erp_test
+      REDIS_URL: ""
+      SECRET_KEY: isolated-ci-secret-not-for-deployment
       TESTING: "1"
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-          cache: "pip"
-
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
       - name: Install backend dependencies
         working-directory: ./backend
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Wait for PostgreSQL ready
-        run: |
-          for i in $(seq 1 30); do
-            pg_isready -h localhost -p 5432 -U erp -d erp_test && exit 0
-            sleep 2
-          done
-          echo "PostgreSQL 未就绪" >&2
-          exit 1
-
-      - name: Run pytest
+        run: pip install -r requirements.txt
+      - name: Initialize empty PostgreSQL through real migrations and seeds
         working-directory: ./backend
-        run: python -m pytest tests/ -v
+        run: |
+          python - <<'PY'
+          import asyncio
+          from sqlalchemy import func, select
+          from app.db.init_db import _alembic_head, _current_revision, init_db
+          from app.db.session import AsyncSessionLocal, engine
+          from app.models.sys import SysConfig, SysDictItem, SysDictType, SysUser
+
+          async def verify():
+              try:
+                  await init_db()
+                  async with engine.connect() as conn:
+                      assert await conn.run_sync(_current_revision) == _alembic_head()
+                  async with AsyncSessionLocal() as session:
+                      for model in (SysConfig, SysDictItem, SysDictType, SysUser):
+                          assert await session.scalar(select(func.count()).select_from(model)) > 0
+                  await init_db()
+              finally:
+                  await engine.dispose()
+
+          asyncio.run(verify())
+          PY
+      - name: Check model and migration schema agree
+        working-directory: ./backend
+        run: alembic check
+      - name: Round-trip the new revision
+        working-directory: ./backend
+        run: |
+          alembic downgrade e4a8b7c6d5f4
+          alembic upgrade head
+          alembic check

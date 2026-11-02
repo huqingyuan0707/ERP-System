@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import setup_logging
 from app.db.init_db import init_db
+from app.services.audit import AuditMiddleware
 
 
 @asynccontextmanager
@@ -36,6 +37,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.add_middleware(AuditMiddleware)
 register_exception_handlers(app)
 
 app.include_router(api_router, prefix=settings.API_V1_PREFIX)

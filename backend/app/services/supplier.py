@@ -1,10 +1,10 @@
 """供应商业务逻辑：编码、账期、引用保护、应付余额与操作日志。
 
-本层统一提交或回滚事务，供应商资料、应付汇总和日志必须一起成功或一起撤销。
+默认由本层提交或回滚；commit=False 时由外层统一处理。
+供应商资料、应付汇总和日志必须一起成功或一起撤销。
 停用通过部分更新 status=0 完成，只影响新单据的可选范围，不影响历史单据。
 """
 
-import json  # 将操作目标及变更明细写成 JSON，便于审计。
 from datetime import date, timedelta  # 日期与天数差，用于按账期推算应付到期日。
 from decimal import Decimal  # 定点数类型，应付余额使用金额类型。
 
@@ -12,8 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession  # 所有仓储共用请求内�
 
 from app.core.exceptions import AppException, ErrorCode  # 复用统一业务异常和 HTTP 错误码。
 from app.models.base_data import BdSupplier  # 供应商 ORM 对象，仅在业务层内部使用。
-from app.models.sys import SysOperLog  # 操作日志和供应商写入同一个数据库事务。
-from app.repositories.oper_log import OperLogRepository  # 日志仓储只 flush，不单独提交。
 from app.repositories.supplier import SupplierRepository  # 封装供应商查询与单据引用检查。
 from app.schemas.common import PageResult  # 列表统一使用项目分页结构。
 from app.schemas.supplier import (  # 请求与返回均使用供应商专用 Schema。
@@ -22,6 +20,7 @@ from app.schemas.supplier import (  # 请求与返回均使用供应商专用 Sc
     SupplierQuery,  # 列表的分页、关键字和状态条件。
     SupplierUpdate,  # 部分更新请求，区分未传字段与显式传空。
 )  # Schema 已负责长度、账期和状态范围等基础输入校验。
+from app.services.audit import write_oper_log
 from app.utils.code_gen import format_code, next_seq_from_code  # 使用统一编码工具。
 from app.utils.pagination import paginate_result  # 封装当前页数据及总条数。
 
@@ -33,12 +32,13 @@ OPER_MODULE = "基础资料"  # sys_oper_log 中记录本业务所属模块。
 class SupplierService:  # 汇集供应商业务规则，接口层只负责调用。
     """提供供应商查询和写操作；删除前检查采购与应付引用，停用只影响新单据选择。"""
 
-    def __init__(self, db: AsyncSession, tenant_id: int) -> None:  # 接收会话与租户，不创建额外事务。
+    def __init__(
+        self, db: AsyncSession, tenant_id: int
+    ) -> None:  # 接收会话与租户，不创建额外事务。
         """用 db 初始化全部仓储；它们共享同一事务，无返回值。"""
         self.db = db  # 提交和回滚统一由本 Service 控制。
         self.tenant_id = tenant_id  # 当前租户 ID，用于多租户数据隔离。
         self.suppliers = SupplierRepository(db, tenant_id=tenant_id)  # 按租户隔离供应商及引用。
-        self.oper_logs = OperLogRepository(db)  # 写入与供应商变更绑定的审计记录。
 
     async def list_suppliers(  # 分页查询供应商并一次性补齐应付余额。
         self,  # 使用当前供应商 Service。
@@ -92,6 +92,8 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
         self,  # 使用当前 Service 的仓储与事务。
         payload: SupplierCreate,  # 已通过基础校验的新增资料。
         current_user_id: int,  # 写入日志和档案审计字段的操作人。
+        *,
+        commit: bool = True,
     ) -> SupplierOut:  # 成功后返回新供应商详情。
         """用 payload 新建供应商并记录 current_user_id；返回详情，编码重复抛 409。
 
@@ -116,7 +118,7 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
                 account=payload.account,  # 银行账号允许未填写。
                 credit_days=payload.credit_days,  # 账期天数，用于推算应付到期日。
                 status=payload.status,  # 1 表示启用，0 表示停用。
-                remark=payload.remark,  # 备注仅保存，不擅自扩充出参字段。
+                remark=payload.remark,  # 备注保存并回填至出参。
                 tenant_id=self.tenant_id,  # 多租户隔离：归属当前租户。
                 created_by=current_user_id,  # 记录谁创建了这份档案。
                 updated_by=current_user_id,  # 初次保存的更新人同创建人。
@@ -124,10 +126,12 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
             await self.suppliers.add(supplier)  # flush 并刷新主键，不在仓储里 commit。
             await self._write_log(current_user_id, "新增供应商", supplier.id)  # 记录新增操作。
             result = await self._to_out(supplier)  # 提交前完成出参校验，失败仍可整体回滚。
-            await self.db.commit()  # 供应商和操作日志一次性生效。
+            if commit:
+                await self.db.commit()
             return result  # 返回已准备好的 Schema，不在提交后追加数据库查询。
         except Exception:  # 业务异常和数据库异常都必须撤销本次未完成操作。
-            await self.db.rollback()  # 恢复本事务中已经 flush 的资料和日志。
+            if commit:
+                await self.db.rollback()
             raise  # 保留原异常，交给统一异常处理器生成响应。
 
     async def update_supplier(  # 按实际传入字段编辑，停用也统一走这个入口。
@@ -135,6 +139,8 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
         supplier_id: int,  # 本次要编辑的供应商主键。
         payload: SupplierUpdate,  # 调用方实际提交的更新字段。
         current_user_id: int,  # 操作日志及更新人字段使用此 ID。
+        *,
+        commit: bool = True,
     ) -> SupplierOut:  # 返回更新后的供应商详情。
         """将 payload 的已传字段更新到 supplier_id，记录 current_user_id 后返回详情。
 
@@ -148,7 +154,7 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
             data: dict[str, str | int | None] = payload.model_dump(  # 明确允许写入的值类型。
                 exclude_unset=True  # 只保留实际传入字段，不能丢弃 False、0 或显式 None。
             )  # 未传字段保持数据库原值。
-            for field in ("code", "name"):  # 这些列不允许数据库空值。
+            for field in ("code", "name", "credit_days", "status"):  # 这些列不允许数据库空值。
                 if field in data and data[field] is None:  # 只拒绝显式 null，不误伤未传字段。
                     # 用 422 明确指出哪个必填字段被传成了 null。
                     raise AppException(ErrorCode.VALIDATION_ERROR, f"{field} 不能为 null")
@@ -175,16 +181,20 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
             supplier.updated_by = current_user_id  # 档案中同步记录本次操作人。
             await self._write_log(current_user_id, action, supplier.id)  # flush 资料和操作日志。
             result = await self._to_out(supplier)  # 在事务内回填最新应付余额并验证出参。
-            await self.db.commit()  # 供应商字段和日志一起生效。
+            if commit:
+                await self.db.commit()
             return result  # 提交成功后直接返回已生成的详情。
         except Exception:  # 包括校验、日志和数据库异常，不留半完成的编辑。
-            await self.db.rollback()  # 释放锁并撤销已经 flush 的所有本次变更。
+            if commit:
+                await self.db.rollback()
             raise  # 不吞异常，继续交给统一异常处理器。
 
     async def delete_supplier(  # 软删除供应商，并记录操作人。
         self,  # 使用当前 Service 的会话。
         supplier_id: int,  # 本次需要软删除的供应商主键。
         current_user_id: int,  # 执行删除的登录用户 ID。
+        *,
+        commit: bool = True,
     ) -> None:  # 删除成功不返回详情，历史资料仍在数据库中保留。
         """删除 supplier_id 并记录 current_user_id，无返回值。
 
@@ -199,9 +209,11 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
             supplier.updated_by = current_user_id  # 记录执行软删除的操作人。
             # 日志仓储只 flush，软删除标记和日志仍未提交。
             await self._write_log(current_user_id, "删除供应商", supplier.id)
-            await self.db.commit()  # 最后由 Service 提交，Repository 不拥有业务事务。
+            if commit:
+                await self.db.commit()
         except Exception:  # 删除或日志失败时恢复原供应商状态。
-            await self.db.rollback()  # 撤销软删除标记及尚未成功的日志。
+            if commit:
+                await self.db.rollback()
             raise  # 将原始异常交给统一错误处理。
 
     async def calculate_due_date(  # 按供应商账期推算应付到期日。
@@ -209,7 +221,7 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
         supplier_id: int,  # 应付单据对应的供应商 ID。
         bill_date: date,  # 单据日期，如入库日期或开票日期。
     ) -> date:  # 返回到期日 = 单据日期 + 账期天数。
-        """按供应商账期计算应付到期日，供应付单据生成时调用。
+        """按供应商账期计算应付到期日，保留纯 helper，应付单据调用链尚待接入。
 
         账期为 0 时到期日与单据日期相同；停用供应商同样可以计算历史单据的到期日。
         """
@@ -289,13 +301,11 @@ class SupplierService:  # 汇集供应商业务规则，接口层只负责调用
     ) -> None:  # 只写当前事务，不直接返回或提交日志。
         """记录 operator_id 对 target_id 的 action，无返回值；写入失败向外抛错以整体回滚。"""
         params: dict[str, int] = {"supplierId": target_id}  # JSON 参数使用 camelCase。
-        await self.oper_logs.add(  # 只 flush，是否提交由调用它的写操作决定。
-            SysOperLog(  # 与其它基础资料使用同一张 sys_oper_log 表。
-                user_id=operator_id,  # 记录操作人，不使用其他字段代替。
-                module=OPER_MODULE,  # 所属模块为基础资料。
-                action=action,  # 操作类型用于日志查询和审计。
-                params=json.dumps(params, ensure_ascii=False),  # 保留中文，字段名遵循 JSON 约定。
-                result="success",  # 成功日志与业务一起提交，业务失败时这条日志也回滚。
-                status=1,  # 沿用已有操作日志的成功状态约定。
-            )  # 日志异常继续向外抛出，由写操作入口回滚整个业务。
-        )  # 不在这里 commit，避免破坏调用方事务边界。
+        await write_oper_log(
+            self.db,
+            tenant_id=self.tenant_id,
+            operator_id=operator_id,
+            action=action,
+            params=params,
+            module=OPER_MODULE,
+        )

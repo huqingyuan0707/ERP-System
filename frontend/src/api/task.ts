@@ -8,12 +8,22 @@ import type {
 } from '@/types/log'
 
 /** 任务列表 */
-export const getTaskList = (params: TaskQuery): Promise<PageResult<Task>> =>
-  request({ url: '/sys/tasks', method: 'get', params })
+export const getTaskList = (params: TaskQuery, signal?: AbortSignal): Promise<PageResult<Task>> =>
+  request({ url: '/sys/tasks', method: 'get', params, signal, _silentAuth: true })
 
-/** 任务详情（前端轮询进度） */
-export const getTaskDetail = (taskId: string): Promise<Task> =>
-  request({ url: `/sys/tasks/${taskId}`, method: 'get' })
+/** 任务详情（轮询401直接停止，不触发后台无限刷新） */
+export const getTaskDetail = (taskId: string, signal?: AbortSignal): Promise<Task> =>
+  request({ url: `/sys/tasks/${encodeURIComponent(taskId)}`, method: 'get', signal, _silentAuth: true })
+
+export const isTerminalTaskError = (error: unknown): boolean => {
+  const status = (error as { response?: { status?: number } })?.response?.status
+  return status === 401 || status === 403 || status === 404
+}
+
+/** 首选按taskId下载，避免依赖服务器路径分隔符和文件名猜测。 */
+export const downloadTaskFile = (task: Task): Promise<void> =>
+  download(`/sys/tasks/${encodeURIComponent(task.taskId)}/download`, {},
+    task.filePath?.split(/[\\/]/).pop() ?? '导出.xlsx')
 
 /** 商品导出：提交异步任务，返回 taskId */
 export const exportGoods = (params: {

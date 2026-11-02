@@ -18,13 +18,13 @@ export const getSupplierOptions = (): Promise<Supplier[]> =>
   request({ url: '/base/suppliers/options', method: 'get' })
 
 /** 新增供应商。 */
-export const createSupplier = (payload: SupplierCreatePayload): Promise<Supplier> =>
-  request({ url: '/base/suppliers', method: 'post', data: payload })
+export const createSupplier = (payload: SupplierCreatePayload, idempotencyKey?: string): Promise<Supplier> =>
+  request({ url: '/base/suppliers', method: 'post', data: payload, headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })
 
 /** 修改供应商（部分更新）。 */
-export const updateSupplier = (id: number, payload: SupplierUpdatePayload): Promise<Supplier> =>
-  request({ url: `/base/suppliers/${id}`, method: 'put', data: payload })
+export const updateSupplier = (id: number, payload: SupplierUpdatePayload, idempotencyKey?: string): Promise<Supplier> =>
+  request({ url: `/base/suppliers/${id}`, method: 'put', data: payload, headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })
 
 /** 删除供应商（后端为软删除，有单据引用时返回 409）。 */
-export const deleteSupplier = (id: number): Promise<null> =>
-  request({ url: `/base/suppliers/${id}`, method: 'delete' })
+export const deleteSupplier = (id: number, idempotencyKey?: string): Promise<null> =>
+  request({ url: `/base/suppliers/${id}`, method: 'delete', headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined })

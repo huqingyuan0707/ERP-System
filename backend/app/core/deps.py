@@ -15,6 +15,7 @@ from app.db.session import get_db
 from app.models.sys import SysUser
 from app.services.auth import AuthService
 
+
 __all__ = [
     "AccessTokenPayloadDep",
     "CurrentUserDep",
@@ -49,7 +50,11 @@ AccessTokenPayloadDep = Annotated[dict[str, Any], Depends(get_access_payload)]
 
 async def get_current_user(payload: AccessTokenPayloadDep, db: DbDep) -> SysUser:
     """解析 Bearer 令牌并返回当前登录用户（校验 ver 匹配与 jti 未撤销）。"""
-    return await AuthService(db).resolve_access_user(payload)
+    user = await AuthService(db).resolve_access_user(payload)
+    from app.services.audit import bind_audit_actor
+
+    bind_audit_actor(user.tenant_id, user.id)
+    return user
 
 
 CurrentUserDep = Annotated[SysUser, Depends(get_current_user)]
@@ -69,20 +74,23 @@ def require_perm(perm_code: str) -> Callable[..., Awaitable[SysUser]]:
 
 async def get_current_tenant(
     request: Request,
-    payload: AccessTokenPayloadDep,
+    current_user: CurrentUserDep,
 ) -> int:
-    """从请求头 X-Tenant-Id 或 JWT 载荷中解析当前租户 ID，缺失时抛出 400。
-
-    优先级：请求头 > JWT 载荷。前端请求拦截器会统一注入 X-Tenant-Id，
-    后端网关或测试脚本可通过该头指定租户上下文。
-    """
-    tenant_id = request.headers.get("X-Tenant-Id")
-    if tenant_id is not None:
-        return int(tenant_id)
-    tenant_id = payload.get("tenant_id")
-    if tenant_id is None:
-        raise AppException(ErrorCode.BAD_REQUEST, "缺少租户上下文")
-    return int(tenant_id)
+    """使用已认证用户的租户；请求头仅用于一致性检查。"""
+    tenant_id = current_user.tenant_id
+    if tenant_id is None or tenant_id <= 0:
+        raise AppException(ErrorCode.FORBIDDEN, "账号缺少有效租户")
+    requested = request.headers.get("X-Tenant-Id")
+    if requested is not None:
+        try:
+            requested_id = int(requested)
+        except (TypeError, ValueError) as exc:
+            raise AppException(ErrorCode.BAD_REQUEST, "租户标识必须是正整数") from exc
+        if requested_id <= 0 or requested_id > 9223372036854775807:
+            raise AppException(ErrorCode.BAD_REQUEST, "租户标识超出有效范围")
+        if requested_id != tenant_id:
+            raise AppException(ErrorCode.FORBIDDEN, "不能访问其他租户")
+    return tenant_id
 
 
 TenantDep = Annotated[int, Depends(get_current_tenant)]

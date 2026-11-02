@@ -1,10 +1,7 @@
-"""建表与种子数据（首次启动自动执行，幂等）。
+"""安全初始化空库与种子数据；已有数据库的结构变更必须显式执行迁移。
 
-schema 策略（与 alembic 配合，结构变更一律走迁移）：
-- 新库（无 alembic_version 表）：create_all 建表后 stamp 到当前 head，
-  之后的结构变更由 `alembic upgrade head` 负责；
-- 已有库（有 alembic_version）：只补建缺失的表，**绝不修改已有表结构**；
-  若库里的版本落后于代码 head，打印告警提示执行 `alembic upgrade head`。
+只有完全空的数据库可以自动执行 Alembic 迁移。已有未纳管数据库、版本
+落后或迁移失败均阻断启动，绝不通过 create_all / stamp 掩盖结构差异。
 """
 
 import logging
@@ -12,13 +9,11 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import func, inspect, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
-from app.db.base import Base
 from app.db.session import AsyncSessionLocal, engine
 from app.models.base_data import BdGoods, BdGoodsCategory, BdUnit, BdWarehouse
 from app.models.sys import (
@@ -40,113 +35,77 @@ DEFAULT_ADMIN_USERNAME = "admin"
 DEFAULT_ADMIN_PASSWORD = "admin123"
 
 
-def _alembic_script() -> ScriptDirectory | None:
-    """加载 alembic 脚本目录；失败返回 None（不阻断服务启动）。"""
-    try:
-        cfg = Config(str(ALEMBIC_INI))
-        return ScriptDirectory.from_config(cfg)
-    except Exception:  # noqa: BLE001  迁移目录缺失时不应影响服务启动
-        logger.warning("未能加载 alembic 脚本目录，请检查 %s", ALEMBIC_INI, exc_info=True)
-        return None
+def _alembic_config() -> Config:
+    cfg = Config(str(ALEMBIC_INI))
+    # 启动目录可能不是 backend，迁移脚本路径不能依赖当前工作目录。
+    cfg.set_main_option("script_location", str(ALEMBIC_INI.parent / "alembic"))
+    return cfg
 
 
-def _alembic_head() -> str | None:
-    """读取代码侧当前迁移版本（head）；读不到返回 None。"""
-    script = _alembic_script()
-    if script is None:
-        return None
+def _alembic_head() -> str:
+    """读取唯一迁移 head；缺失或分叉都必须阻断启动。"""
     try:
-        return script.get_current_head()
-    except Exception:  # noqa: BLE001
-        logger.warning("未能读取 alembic head", exc_info=True)
-        return None
+        head = ScriptDirectory.from_config(_alembic_config()).get_current_head()
+    except Exception as exc:
+        raise RuntimeError("无法读取 Alembic head；请检查迁移脚本后再启动") from exc
+    if not head:
+        raise RuntimeError("Alembic head 为空；请检查迁移脚本后再启动")
+    return head
 
 
 def _current_revision(connection) -> str | None:
-    """读取数据库中记录的迁移版本；没有版本表（全新库）返回 None。"""
+    """无版本记录返回 None；多版本记录不猜测、不自动合并。"""
     if "alembic_version" not in inspect(connection).get_table_names():
         return None
     rows = connection.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
+    if len(rows) > 1:
+        raise RuntimeError("数据库包含多个 Alembic 版本；请核对后执行 alembic upgrade head")
     return rows[0] if rows else None
 
 
-def _upgrade_to_head(connection) -> bool:
-    """在已建表的库上执行 alembic 迁移，把版本推进到 head。
-
-    背景：新库的建表走 Base.metadata.create_all，而各迁移文件里除了建表，
-    还包含**种子数据**（字典类型/字典项、系统参数、单号规则等）的 INSERT。
-    只 create_all + stamp 会跳过这些 INSERT，导致新库缺少字典与参数，
-    字典页、单号规则接口直接 404。
-
-    这里让迁移真正跑一遍：迁移脚本里的建表操作都做了「表已存在则跳过」的
-    幂等处理，因此可以安全地在 create_all 之后执行。
-
-    返回是否成功推进到 head；失败不抛异常，仅告警，避免阻断服务启动。
-    """
-    script = _alembic_script()
-    if script is None:
-        return False
+def _upgrade_to_head(connection) -> None:
+    """复用空库初始化事务，真正执行结构迁移及迁移中的字典/参数种子。"""
+    cfg = _alembic_config()
+    cfg.attributes["connection"] = connection
     try:
-        cfg = Config(str(ALEMBIC_INI))
-        cfg.attributes["connection"] = connection
         command.upgrade(cfg, "head")
-    except Exception:  # noqa: BLE001  迁移失败不应阻断服务启动
-        logger.warning("执行 alembic upgrade head 失败", exc_info=True)
-        return False
-    return True
+    except Exception as exc:
+        raise RuntimeError(
+            "数据库迁移失败，启动已终止且未 stamp；请修复后执行 alembic upgrade head"
+        ) from exc
 
 
-def _stamp_head(connection) -> None:
-    """新库建表后打基线：把版本标记为当前 head，后续变更走迁移。"""
-    script = _alembic_script()
-    if script is None:
+def _prepare_schema(connection) -> None:
+    head = _alembic_head()
+    revision = _current_revision(connection)
+    if revision is not None:
+        if revision != head:
+            raise RuntimeError(
+                f"数据库迁移版本 {revision} 与代码 head {head} 不一致；"
+                "请先执行 alembic upgrade head，启动不会 create_all 或 stamp"
+            )
         return
-    head = script.get_current_head()
-    if not head:
-        return
-    # 复用外层事务，不额外开启事务
-    MigrationContext.configure(connection).stamp(script, revision=head)
-    logger.info("已创建 alembic 基线版本：%s", head)
+
+    inspector = inspect(connection)
+    # 空的 alembic_version 表可以是失败迁移留下的；只要有业务表/视图就不算空库。
+    tables = set(inspector.get_table_names()) - {"alembic_version"}
+    if tables or inspector.get_view_names():
+        raise RuntimeError(
+            "检测到已有未纳管数据库（存在表/视图但无 Alembic 版本）；"
+            "请核对历史结构与迁移基线后执行 alembic upgrade head，禁止自动 stamp"
+        )
+    _upgrade_to_head(connection)
+    if _current_revision(connection) != head:
+        raise RuntimeError(
+            "数据库迁移未达到代码 head；请执行 alembic upgrade head，禁止自动 stamp"
+        )
+    logger.info("空数据库已通过 Alembic 迁移到 head: %s", head)
 
 
 async def init_db() -> None:
-    """建表并写入种子数据。
-
-    库表结构策略（与 alembic 配合，结构变更一律走迁移）：
-    - 新库（无 alembic_version 表）：create_all 建表后 stamp 到当前 head，
-      之后的结构变更由 `alembic upgrade head` 负责；
-    - 已有库（有 alembic_version）：不再 create_all 改结构，仅将版本标记为
-      当前 head，结构变更由 CI/部署脚本中的 `alembic upgrade head` 负责。
-    """
+    """仅初始化空库；已纳管数据库必须位于 head 才允许写入应用种子。"""
     async with engine.begin() as conn:
-        revision = await conn.run_sync(_current_revision)
-        if revision is None:
-            # 全新库：先 create_all 建表，再执行迁移以补齐种子数据
-            # （迁移里含字典/参数/单号规则的 INSERT，只 create_all 会漏掉）
-            await conn.run_sync(Base.metadata.create_all)
-            upgraded = await conn.run_sync(_upgrade_to_head)
-            if upgraded:
-                logger.info("新库已建表并执行迁移到 alembic head")
-            else:
-                # 迁移不可用时退化为仅打基线，保证服务仍能启动
-                await conn.run_sync(_stamp_head)
-                logger.info("新库已建表并 stamp 到 alembic head（迁移未执行）")
-        else:
-            # 已纳管的库：不再 create_all 改结构，仅 stamp 到 head
-            head = _alembic_head()
-            if head:
-                if revision != head:
-                    logger.warning(
-                        "数据库迁移版本 %s 落后于代码 head %s；"
-                        "init_db 不再自动改结构，请确保已通过 `alembic upgrade head` "
-                        "应用结构变更；此处仅将版本标记为 head",
-                        revision,
-                        head,
-                    )
-                await conn.run_sync(_stamp_head)
-                logger.info("已将数据库版本标记为 alembic head: %s", head)
-            else:
-                logger.warning("无法读取 alembic head，跳过 stamp")
+        await conn.run_sync(_prepare_schema)
     async with AsyncSessionLocal() as session:
         await _seed(session)
 
@@ -244,6 +203,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     goods_menu = next(menu for menu in menus if menu.perm_code == "base:goods:list")
     warehouse_menu = next(menu for menu in menus if menu.perm_code == "base:warehouse:list")
     supplier_menu = next(menu for menu in menus if menu.perm_code == "base:supplier:list")
+    customer_menu = next(menu for menu in menus if menu.perm_code == "base:customer:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -267,6 +227,9 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("新增供应商", "base:supplier:add", supplier_menu.id, 1),
         _button("修改供应商", "base:supplier:edit", supplier_menu.id, 2),
         _button("删除供应商", "base:supplier:delete", supplier_menu.id, 3),
+        _button("新增客户", "base:customer:add", customer_menu.id, 1),
+        _button("修改客户", "base:customer:edit", customer_menu.id, 2),
+        _button("删除客户", "base:customer:delete", customer_menu.id, 3),
         _button("查看操作日志", "sys:log:view", user_menu.id, 6),
         _button("查看异步任务", "sys:task:view", user_menu.id, 7),
         _button("超级权限", "*", dir_sys.id, 99),
@@ -486,6 +449,68 @@ async def _ensure_permissions(session: AsyncSession) -> None:
         ).scalars().all()
     )
     for perm in supplier_perms:
+        granted = await session.scalar(
+            select(SysRolePermission.role_id).where(
+                SysRolePermission.role_id == admin_role.id,
+                SysRolePermission.permission_id == perm.id,
+            )
+        )
+        if granted is None:
+            session.add(SysRolePermission(role_id=admin_role.id, permission_id=perm.id))
+    await session.flush()
+
+    # 客户菜单与按钮权限：首次初始化已播种菜单，这里对老库补齐菜单与按钮，并授权管理员
+    customer_menu = await session.scalar(
+        select(SysPermission).where(SysPermission.perm_code == "base:customer:list")
+    )
+    if customer_menu is None:
+        dir_base = await session.scalar(
+            select(SysPermission).where(
+                SysPermission.type == 1, SysPermission.route_path == "/base"
+            )
+        )
+        customer_menu = SysPermission(
+            name="客户管理",
+            type=2,
+            perm_code="base:customer:list",
+            route_path="/base/customer",
+            component="base/customer/index",
+            parent_id=dir_base.id if dir_base is not None else None,
+            sort=4,
+        )
+        session.add(customer_menu)
+        await session.flush()
+
+    customer_button_specs = (
+        ("新增客户", "base:customer:add", 1),
+        ("修改客户", "base:customer:edit", 2),
+        ("删除客户", "base:customer:delete", 3),
+    )
+    for name, perm_code, sort in customer_button_specs:
+        exists = await session.scalar(
+            select(SysPermission.perm_code).where(SysPermission.perm_code == perm_code)
+        )
+        if exists is None:
+            session.add(
+                SysPermission(
+                    name=name,
+                    type=3,
+                    perm_code=perm_code,
+                    parent_id=customer_menu.id,
+                    sort=sort,
+                )
+            )
+    await session.flush()
+
+    # 超级管理员默认拥有全部权限，补齐后同步授权
+    customer_perms = list(
+        (
+            await session.execute(
+                select(SysPermission).where(SysPermission.perm_code.like("base:customer:%"))
+            )
+        ).scalars().all()
+    )
+    for perm in customer_perms:
         granted = await session.scalar(
             select(SysRolePermission.role_id).where(
                 SysRolePermission.role_id == admin_role.id,

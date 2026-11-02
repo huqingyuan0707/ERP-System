@@ -1,3 +1,5 @@
+import os
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,4 +37,7 @@ class Settings(BaseSettings):
     TESTING: bool = False
 
 
-settings = Settings()
+# 测试只使用显式环境配置，不读取开发机的 .env。
+settings = (
+    Settings(_env_file=None) if os.getenv("TESTING", "").lower() in {"1", "true"} else Settings()
+)

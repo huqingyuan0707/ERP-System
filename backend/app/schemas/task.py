@@ -11,7 +11,7 @@ class TaskQuery(PageQuery):
     """异步任务列表查询参数。"""
 
     task_type: str | None = None
-    status: int | None = None
+    status: int | None = Field(default=None, ge=1, le=4)
 
 
 class TaskOut(BaseModel):
@@ -29,6 +29,7 @@ class TaskOut(BaseModel):
     status: int  # 1=待执行, 2=执行中, 3=成功, 4=失败
     params: str | None = None
     file_path: str | None = None
+    can_download: bool = False
     error_msg: str | None = None
     progress: int = 0
     created_by: int | None = None
@@ -47,4 +48,3 @@ class TaskCreate(BaseModel):
 
     task_type: str = Field(min_length=1, max_length=32)
     params: str | None = None
-    created_by: int | None = None

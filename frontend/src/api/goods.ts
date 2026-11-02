@@ -20,8 +20,11 @@ export const getGoodsList = (params: GoodsQuery): Promise<PageResult<Goods>> =>
 export const getGoodsDetail = (id: number): Promise<Goods> =>
   request({ url: `/base/goods/${id}`, method: 'get' })
 
-export const createGoods = (payload: GoodsCreatePayload): Promise<Goods> =>
-  request({ url: '/base/goods', method: 'post', data: payload })
+export const createGoods = (payload: GoodsCreatePayload, idempotencyKey?: string): Promise<Goods> =>
+  request({
+    url: '/base/goods', method: 'post', data: payload,
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+  })
 
 export const updateGoods = (id: number, payload: GoodsUpdatePayload): Promise<Goods> =>
   request({ url: `/base/goods/${id}`, method: 'put', data: payload })
@@ -43,8 +46,11 @@ export const importGoods = (file: File): Promise<GoodsImportResult> => {
 export const getCategories = (): Promise<GoodsCategory[]> =>
   request({ url: '/base/categories', method: 'get', params: { pageSize: 100 } })
 
-export const createCategory = (payload: GoodsCategoryPayload): Promise<GoodsCategory> =>
-  request({ url: '/base/categories', method: 'post', data: payload })
+export const createCategory = (payload: GoodsCategoryPayload, idempotencyKey?: string): Promise<GoodsCategory> =>
+  request({
+    url: '/base/categories', method: 'post', data: payload,
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+  })
 
 export const updateCategory = (id: number, payload: Partial<GoodsCategoryPayload>): Promise<GoodsCategory> =>
   request({ url: `/base/categories/${id}`, method: 'put', data: payload })
@@ -55,8 +61,11 @@ export const deleteCategory = (id: number): Promise<null> =>
 export const getUnits = (): Promise<Unit[]> =>
   request({ url: '/base/units', method: 'get', params: { pageSize: 100 } })
 
-export const createUnit = (payload: UnitPayload): Promise<Unit> =>
-  request({ url: '/base/units', method: 'post', data: payload })
+export const createUnit = (payload: UnitPayload, idempotencyKey?: string): Promise<Unit> =>
+  request({
+    url: '/base/units', method: 'post', data: payload,
+    headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
+  })
 
 export const updateUnit = (id: number, payload: Partial<UnitPayload>): Promise<Unit> =>
   request({ url: `/base/units/${id}`, method: 'put', data: payload })

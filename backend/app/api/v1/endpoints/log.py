@@ -11,7 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from fastapi.requests import Request
 
-from app.core.deps import CurrentUserDep, DbDep, require_perm
+from app.core.deps import CurrentUserDep, DbDep, TenantDep, require_perm
 from app.models.sys import SysUser
 from app.schemas.common import ApiResponse, PageResult, success_response
 from app.schemas.login_log import LoginLogOut, LoginLogQuery
@@ -40,6 +40,7 @@ def _parse_date(value: str | None) -> datetime | None:
 async def list_oper_logs(
     request: Request,
     db: DbDep,
+    tenant_id: TenantDep,
     current_user: CurrentUserDep,
     _: Annotated[SysUser, Depends(require_perm(LOG_VIEW_PERM))],
     module: str | None = Query(default=None, description="模块名称模糊匹配"),
@@ -62,7 +63,7 @@ async def list_oper_logs(
         page=page,
         page_size=page_size,
     )
-    result = await OperLogService(db).list_oper_logs(query)
+    result = await OperLogService(db, tenant_id=tenant_id).list_oper_logs(query)
     return success_response(result)
 
 
