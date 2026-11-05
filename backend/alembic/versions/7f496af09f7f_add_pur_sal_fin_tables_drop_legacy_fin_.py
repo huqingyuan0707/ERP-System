@@ -851,7 +851,13 @@ def upgrade() -> None:
                type_=sa.Numeric(precision=18, scale=2),
                existing_nullable=False)
     # 删除旧的唯一索引，添加新的 tenant_id 包含的索引
-    op.drop_index('uq_inv_stock_warehouse_goods_tenant', table_name='inv_stock')
+    # 使用条件判断避免删除不存在的索引
+    if dialect == "postgresql":
+        try:
+            op.drop_index('uq_inv_stock_warehouse_goods_tenant', table_name='inv_stock')
+        except Exception:
+            # 索引不存在，跳过删除
+            pass
     op.create_index(op.f('ix_inv_stock_tenant_id'), 'inv_stock', ['tenant_id'], unique=False)
     op.add_column('inv_stock_flow', sa.Column('operator_id', sa.BigInteger().with_variant(sa.Integer(), 'sqlite'), nullable=True))
     op.alter_column('inv_stock_flow', 'tenant_id',
