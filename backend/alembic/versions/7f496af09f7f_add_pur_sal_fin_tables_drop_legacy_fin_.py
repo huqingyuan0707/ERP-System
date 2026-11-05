@@ -6,7 +6,7 @@ Create Date: 2026-11-05 10:58:05.572265
 
 说明：本迁移将旧财务表（fin_account, fin_voucher, fin_entry, fin_ar_ap）重命名为归档表
 （fin_legacy_*），保留数据供审计追溯。这些表为 V2 总账凭证设计草稿，V1 版本不使用。
-downgrade 会删除归档表并重建原表结构，但无法恢复已归档的数据，建议在执行 upgrade 前做数据库备份。
+downgrade 会将归档表重命名回原名，保留所有历史数据，可完全回滚。
 """
 from __future__ import annotations
 
@@ -65,6 +65,23 @@ def _preflight(conn: sa.Connection) -> None:
             f"迁移被阻断：归档表已存在 {legacy_tables}。"
             "请先手动清理归档表或检查是否已执行过此迁移。"
         )
+
+    # PostgreSQL 检查视图依赖
+    if dialect == "postgresql":
+        tables_str = "', '".join(existing_tables)
+        result = conn.execute(
+            sa.text(
+                f"SELECT viewname FROM pg_views "
+                f"WHERE schemaname = current_schema() "
+                f"AND definition LIKE '%{tables_str}%'"
+            )
+        )
+        views = [row[0] for row in result]
+        if views:
+            raise RuntimeError(
+                f"迁移被阻断：以下视图依赖旧财务表 {views}。"
+                "请先删除或修改视图后再执行迁移。"
+            )
 
 # revision identifiers, used by Alembic.
 revision: str = '7f496af09f7f'
@@ -816,23 +833,11 @@ def upgrade() -> None:
     op.create_index('idx_sal_return_item_return', 'sal_return_item', ['return_id'], unique=False)
     op.create_index(op.f('ix_sal_return_item_tenant_id'), 'sal_return_item', ['tenant_id'], unique=False)
     # 重命名旧财务表为归档表，保留数据供审计追溯
+    # 直接 rename_table，索引随表保留，避免 downgrade 时索引名冲突
     # 先重命名引用方 fin_entry，再重命名被引用方 fin_voucher，避免外键约束冲突
-    op.drop_index(op.f('ix_fin_entry_account'), table_name='fin_entry')
-    op.drop_index(op.f('ix_fin_entry_tenant_id'), table_name='fin_entry')
-    op.drop_index(op.f('ix_fin_entry_voucher'), table_name='fin_entry')
     op.rename_table('fin_entry', 'fin_legacy_entry')
-    op.drop_index(op.f('ix_fin_voucher_no'), table_name='fin_voucher')
-    op.drop_index(op.f('ix_fin_voucher_tenant_date'), table_name='fin_voucher')
-    op.drop_index(op.f('ix_fin_voucher_tenant_id'), table_name='fin_voucher')
     op.rename_table('fin_voucher', 'fin_legacy_voucher')
-    op.drop_index(op.f('ix_fin_ar_ap_partner'), table_name='fin_ar_ap')
-    op.drop_index(op.f('ix_fin_ar_ap_status'), table_name='fin_ar_ap')
-    op.drop_index(op.f('ix_fin_ar_ap_tenant_id'), table_name='fin_ar_ap')
-    op.drop_index(op.f('uq_fin_ar_ap_source'), table_name='fin_ar_ap')
     op.rename_table('fin_ar_ap', 'fin_legacy_ar_ap')
-    op.drop_index(op.f('ix_fin_account_parent'), table_name='fin_account')
-    op.drop_index(op.f('ix_fin_account_tenant_id'), table_name='fin_account')
-    op.drop_index(op.f('uq_fin_account_code_tenant'), table_name='fin_account')
     op.rename_table('fin_account', 'fin_legacy_account')
     op.add_column('inv_stock', sa.Column('first_in_date', sa.Date(), nullable=True))
     op.add_column('inv_stock', sa.Column('last_out_date', sa.Date(), nullable=True))
@@ -917,11 +922,11 @@ def downgrade() -> None:
                existing_server_default=sa.text("'1'::bigint"))
     op.drop_column('inv_stock', 'last_out_date')
     op.drop_column('inv_stock', 'first_in_date')
-    # 删除归档表并重建原表
-    op.drop_table('fin_legacy_account')
-    op.drop_table('fin_legacy_ar_ap')
-    op.drop_table('fin_legacy_voucher')
-    op.drop_table('fin_legacy_entry')
+    # 将归档表rename回原名，保留数据
+    op.rename_table('fin_legacy_account', 'fin_account')
+    op.rename_table('fin_legacy_ar_ap', 'fin_ar_ap')
+    op.rename_table('fin_legacy_voucher', 'fin_voucher')
+    op.rename_table('fin_legacy_entry', 'fin_entry')
     op.create_table('fin_account',
     sa.Column('id', sa.BIGINT(), autoincrement=True, nullable=False),
     sa.Column('code', sa.VARCHAR(length=32), autoincrement=False, nullable=False, comment='科目编码，如 1001、1102'),

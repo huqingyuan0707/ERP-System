@@ -59,6 +59,24 @@ def _preflight(conn: sa.Connection) -> None:
     if ids:
         raise RuntimeError(
             "Migration blocked; invalid inv_stock invariants: "
+            f"ids={ids}. \n"
+            "请手动修复以下问题后再执行迁移：\n"
+            "1. qty >= 0: 库存数量不能为负\n"
+            "2. locked_qty >= 0: 锁定数量不能为负\n"
+            "3. available_qty >= 0: 可用数量不能为负\n"
+            "4. available_qty = qty - locked_qty: 可用数量必须等于账面数量减去锁定数量\n"
+            "5. qty >= locked_qty: 账面数量不能小于锁定数量\n"
+            "6. avg_cost >= 0: 平均成本不能为负\n"
+            "修复SQL示例：UPDATE inv_stock SET locked_qty = LEAST(locked_qty, qty), "
+            "available_qty = qty - locked_qty WHERE id IN (上述id列表)"
+        )
+
+
+def _preflight(conn: sa.Connection) -> None:
+    ids = _invalid_ids(conn)
+    if ids:
+        raise RuntimeError(
+            "Migration blocked; invalid inv_stock invariants: "
             f"ids={ids}. Review every listed row before alembic upgrade head. "
             "No historical inventory data was changed."
         )
