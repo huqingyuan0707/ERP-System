@@ -92,6 +92,7 @@ class InvStock(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantM
             "available_qty = qty - locked_qty",
             name="ck_inv_stock_available_qty_consistent",
         ),
+        CheckConstraint("qty >= locked_qty", name="ck_inv_stock_qty_ge_locked"),
         CheckConstraint("avg_cost >= 0", name="ck_inv_stock_avg_cost_nonnegative"),
         # 同一租户下同一商品+仓库唯一（仅未删除行生效）
         Index(

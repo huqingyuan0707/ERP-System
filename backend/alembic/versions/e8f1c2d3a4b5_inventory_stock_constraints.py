@@ -29,6 +29,7 @@ _CONSTRAINTS: tuple[tuple[str, str], ...] = (
         "ck_inv_stock_available_qty_consistent",
         "available_qty = qty - locked_qty",
     ),
+    ("ck_inv_stock_qty_ge_locked", "qty >= locked_qty"),
     ("ck_inv_stock_avg_cost_nonnegative", "avg_cost >= 0"),
 )
 
@@ -47,6 +48,7 @@ def _invalid_ids(conn: sa.Connection) -> list[int]:
         stock.c.locked_qty < 0,
         stock.c.available_qty < 0,
         stock.c.available_qty != stock.c.qty - stock.c.locked_qty,
+        stock.c.qty < stock.c.locked_qty,
         stock.c.avg_cost < 0,
     )
     return list(conn.execute(sa.select(stock.c.id).where(invalid).order_by(stock.c.id)).scalars())
