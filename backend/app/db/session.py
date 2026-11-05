@@ -10,15 +10,25 @@ from app.core.config import settings
 
 # 测试环境每个用例独立事件循环，必须禁用连接池，否则会跨循环复用连接
 # 生产环境使用QueuePool，配置合理的连接池大小
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=False,
-    pool_pre_ping=True,
-    poolclass=NullPool if settings.TESTING else QueuePool,
-    pool_size=5 if not settings.TESTING else None,  # 连接池大小
-    max_overflow=10 if not settings.TESTING else None,  # 最大溢出连接数
-    pool_recycle=3600 if not settings.TESTING else None,  # 连接回收时间（秒）
-)
+if settings.TESTING:
+    # SQLite/测试环境：使用NullPool，不传递连接池参数
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        poolclass=NullPool,
+    )
+else:
+    # 生产环境：使用QueuePool，配置连接池参数
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=False,
+        pool_pre_ping=True,
+        poolclass=QueuePool,
+        pool_size=5,  # 连接池大小
+        max_overflow=10,  # 最大溢出连接数
+        pool_recycle=3600,  # 连接回收时间（秒）
+    )
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
