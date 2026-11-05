@@ -43,3 +43,8 @@ dist/
 *.err
 .backend.*
 .frontend.*
+
+# 个人学习笔记与规划文件
+.zcode/
+PGSql.md
+14天学习计划.md

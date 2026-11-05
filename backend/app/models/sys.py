@@ -117,9 +117,7 @@ class SysUser(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantMi
     # 主键：自增，插入时由数据库生成 ID
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
     # 登录账号：在同一租户下唯一，登录与新增查重都按它查询；唯一约束也是数据库层的最终防重
-    username: Mapped[str] = mapped_column(
-        String(64), index=True, nullable=False
-    )
+    username: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(
         String(255), nullable=False
     )  # 只存 bcrypt 哈希，明文永不落库
@@ -232,9 +230,7 @@ class SysPermission(TimestampMixin, SoftDeleteMixin, Base):
     # 主键：自增，插入时由数据库生成 ID
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
     # 父权限 ID：自关联本表主键，NULL 表示根节点，从而构成目录→菜单→按钮的树
-    parent_id: Mapped[int | None] = mapped_column(
-        BIGINT_PK, ForeignKey("sys_permission.id")
-    )
+    parent_id: Mapped[int | None] = mapped_column(BIGINT_PK, ForeignKey("sys_permission.id"))
     name: Mapped[str] = mapped_column(String(64), nullable=False)  # 权限名称，必填
     type: Mapped[int] = mapped_column(Integer, default=2, nullable=False)  # 1=目录 2=菜单 3=按钮
     # 权限码：后端 require_perm("sys:user:list") 校验用；建索引便于按码查询

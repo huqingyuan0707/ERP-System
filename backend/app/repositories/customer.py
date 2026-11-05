@@ -5,17 +5,12 @@ from decimal import Decimal
 from sqlalchemy import func, or_, select, text
 
 from app.models.base_data import BdCustomer
-from app.models.finance import ArApRecord
+from app.models.finance import FinReceivable
 from app.repositories.base import BaseRepository
 from app.schemas.customer import CustomerQuery
 
 
 CUSTOMER_CODE_PREFIX = "CUS"
-
-# 应收记录中业务方类型：2=客户（应收）
-RECEIVABLE_PARTNER_TYPE_CUSTOMER = 2
-# 应收记录类型：2=应收（区别于应付）
-RECEIVABLE_RECORD_TYPE = 2
 
 # 已结清的销售订单状态；其余状态都算未结，客户仍被业务单据引用
 CLOSED_ORDER_STATUSES = ("完成", "关闭")
@@ -150,38 +145,34 @@ class CustomerRepository(BaseRepository[BdCustomer]):
         return result.first() is not None
 
     async def has_receivable(self, customer_id: int) -> bool:
-        """返回该客户是否存在未作废应收记录（fin_ar_ap，partner_type=2/record_type=2）。"""
-        stmt = (
-            select(ArApRecord.id)
-            .where(ArApRecord.partner_type == RECEIVABLE_PARTNER_TYPE_CUSTOMER)
-            .where(ArApRecord.record_type == RECEIVABLE_RECORD_TYPE)
-            .where(ArApRecord.partner_id == customer_id)
-            .where(ArApRecord.status != 4)
-        )
-        if self.tenant_id is not None:
-            stmt = stmt.where(ArApRecord.tenant_id == self.tenant_id)
+        """返回该客户是否存在应收记录（fin_receivable）。
+
+        只要存在应收记录就说明双方已有账务往来，即使已全额收款，
+        也应保留档案以备对账，因此同样阻止删除。
+        """
+        stmt = select(FinReceivable.id).where(FinReceivable.customer_id == customer_id)
+        if self.tenant_id is not None:  # fin_receivable 含租户列，按当前租户隔离。
+            stmt = stmt.where(FinReceivable.tenant_id == self.tenant_id)
         result = await self.db.execute(stmt.limit(1))
         return result.first() is not None
 
     async def sum_unpaid_receivable(self, customer_ids: list[int]) -> dict[int, Decimal]:
-        """按 customer_ids 汇总未核销应收余额（fin_ar_ap，partner_type=2/record_type=2）。
+        """按 customer_ids 汇总未收应收余额（fin_receivable.unreceived_amount）。
 
-        未核销金额 = amount - reconciled_amount，已核销部分不计入；作废（status=4）不计。
+        未收金额由核销与退货冲减事务维护，可为负（负数表示预收/应退），
+        调用方（信用额度校验）直接以净额参与计算，缺失客户按 0 处理。
         """
         if not customer_ids:
             return {}
         stmt = (
             select(
-                ArApRecord.partner_id,
-                func.coalesce(func.sum(ArApRecord.amount - ArApRecord.reconciled_amount), 0),
+                FinReceivable.customer_id,
+                func.coalesce(func.sum(FinReceivable.unreceived_amount), 0),
             )
-            .where(ArApRecord.partner_type == RECEIVABLE_PARTNER_TYPE_CUSTOMER)
-            .where(ArApRecord.record_type == RECEIVABLE_RECORD_TYPE)
-            .where(ArApRecord.partner_id.in_(customer_ids))
-            .where(ArApRecord.status != 4)
-            .group_by(ArApRecord.partner_id)
+            .where(FinReceivable.customer_id.in_(customer_ids))
+            .group_by(FinReceivable.customer_id)
         )
         if self.tenant_id is not None:
-            stmt = stmt.where(ArApRecord.tenant_id == self.tenant_id)
+            stmt = stmt.where(FinReceivable.tenant_id == self.tenant_id)
         rows = (await self.db.execute(stmt)).all()
         return {int(row[0]): Decimal(str(row[1] or 0)) for row in rows}

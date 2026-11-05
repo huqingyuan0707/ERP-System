@@ -37,12 +37,8 @@ class IdempotencyKey(Base):
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
     key: Mapped[str] = mapped_column(String(255), nullable=False, comment="幂等键，全局唯一")
-    tenant_id: Mapped[int] = mapped_column(
-        BIGINT_PK, nullable=False, index=True, comment="租户 ID"
-    )
-    user_id: Mapped[int] = mapped_column(
-        BIGINT_PK, nullable=False, index=True, comment="操作人 ID"
-    )
+    tenant_id: Mapped[int] = mapped_column(BIGINT_PK, nullable=False, index=True, comment="租户 ID")
+    user_id: Mapped[int] = mapped_column(BIGINT_PK, nullable=False, index=True, comment="操作人 ID")
     biz_type: Mapped[str] = mapped_column(
         String(64), nullable=False, comment="业务类型，如 change_stock、lock_stock"
     )

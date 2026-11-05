@@ -2,6 +2,7 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 
@@ -69,7 +70,7 @@ def payload(op, warehouse_id=1, goods_id=1, qty="1"):
         "warehouse_id": warehouse_id,
         "goods_id": goods_id,
         "qty": Decimal(qty),
-        "biz_time": "20261101",
+        "biz_time": datetime(2026, 11, 1),
     }
     if op == "change":
         return ChangeStockIn(
@@ -247,7 +248,7 @@ def test_business_type_direction_and_unit_cost_validation():
         "goods_id": 1,
         "qty": 1,
         "source_no": "test",
-        "biz_time": "20261101",
+        "biz_time": datetime(2026, 11, 1),
     }
     for biz_type, direction in directions.items():
         assert ChangeStockIn(**base, biz_type=biz_type, direction=direction).direction == direction
@@ -289,7 +290,7 @@ def test_outbound_flow_uses_ledger_quantities_and_existing_average_cost():
                 unit_cost=99,
                 biz_type="sale_out",
                 source_no="SALE-1",
-                biz_time="20261101",
+                biz_time=datetime(2026, 11, 1),
             )
             result = await InventoryService(db, 1).change_stock(request)
             flow = await db.scalar(select(InvStockFlow))
@@ -312,7 +313,7 @@ def test_direction_zero_rejected_and_weighted_cost_uses_before_quantity():
             qty=1,
             biz_type="purchase_in",
             source_no="test",
-            biz_time="20261101",
+            biz_time=datetime(2026, 11, 1),
         )
 
     async def scenario():

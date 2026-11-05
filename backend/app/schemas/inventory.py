@@ -1,5 +1,6 @@
 """库存相关 Schema。"""
 
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal, Self
 
@@ -42,7 +43,7 @@ class StockFlowOut(BaseModel):
     unit_cost: Decimal
     source_type: str | None = None
     source_no: str | None = None
-    biz_time: str
+    biz_time: datetime
     remark: str | None = None
 
 
@@ -57,7 +58,7 @@ class LockStockIn(BaseModel):
     idempotency_key: str | None = Field(default=None, description="幂等键，防止重复提交")
     source_type: str | None = None
     source_no: str | None = None
-    biz_time: str
+    biz_time: datetime
     remark: str | None = None
 
 
@@ -72,7 +73,7 @@ class UnlockStockIn(BaseModel):
     idempotency_key: str | None = Field(default=None, description="幂等键，防止重复提交")
     source_type: str | None = None
     source_no: str | None = None
-    biz_time: str
+    biz_time: datetime
     remark: str | None = None
 
 
@@ -103,7 +104,7 @@ class ChangeStockIn(BaseModel):
         "check_loss",
     ]
     source_no: str
-    biz_time: str
+    biz_time: datetime
     idempotency_key: str | None = Field(default=None, description="幂等键，防止重复提交")
     remark: str | None = None
 
