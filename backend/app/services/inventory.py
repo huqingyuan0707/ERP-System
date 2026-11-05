@@ -45,7 +45,11 @@ class InventoryService:
             raise AppException(ErrorCode.VALIDATION_ERROR, "库存数量必须大于 0")
 
     async def lock_stock(self, payload: LockStockIn, *, commit: bool = True) -> StockOut:
-        """锁定库存；无记录或可用量不足时不创建空库存行。"""
+        """锁定库存；无记录或可用量不足时不创建空库存行。
+
+        保证 qty >= locked_qty 约束：先检查 available_qty >= payload.qty，
+        再增加 locked_qty，最后重算 available_qty = qty - locked_qty。
+        """
         try:
             await self._validate_references(payload.warehouse_id, payload.goods_id, payload.qty)
             stock = await self._repo.get_stock_for_update(payload.warehouse_id, payload.goods_id)
@@ -64,7 +68,11 @@ class InventoryService:
             raise
 
     async def unlock_stock(self, payload: UnlockStockIn, *, commit: bool = True) -> StockOut:
-        """释放历史锁定，允许已停用档案；已删除、跨租户档案仍拒绝。"""
+        """释放历史锁定，允许已停用档案；已删除、跨租户档案仍拒绝。
+
+        保证 qty >= locked_qty 约束：先检查 locked_qty >= payload.qty，
+        再减少 locked_qty，最后重算 available_qty = qty - locked_qty。
+        """
         try:
             await self._validate_references(
                 payload.warehouse_id, payload.goods_id, payload.qty, allow_disabled=True
@@ -87,7 +95,11 @@ class InventoryService:
             raise
 
     async def change_stock(self, payload: ChangeStockIn, *, commit: bool = True) -> ChangeStockOut:
-        """普通库存变更拒绝停用档案；数量校验通过后才允许创建库存。"""
+        """普通库存变更拒绝停用档案；数量校验通过后才允许创建库存。
+
+        保证 qty >= locked_qty 约束：出库时先检查 available_qty >= payload.qty，
+        再修改 qty，最后重算 available_qty = qty - locked_qty。
+        """
         try:
             await self._validate_references(payload.warehouse_id, payload.goods_id, payload.qty)
             stock = await self._repo.get_stock_for_update(payload.warehouse_id, payload.goods_id)

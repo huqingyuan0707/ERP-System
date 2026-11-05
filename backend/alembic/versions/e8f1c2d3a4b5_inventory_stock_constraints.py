@@ -54,16 +54,6 @@ def _invalid_ids(conn: sa.Connection) -> list[int]:
     return list(conn.execute(sa.select(stock.c.id).where(invalid).order_by(stock.c.id)).scalars())
 
 
-def _preflight(conn: sa.Connection) -> None:
-    ids = _invalid_ids(conn)
-    if ids:
-        raise RuntimeError(
-            "Migration blocked; invalid inv_stock invariants: "
-            f"ids={ids}. Review every listed row before alembic upgrade head. "
-            "No historical inventory data was changed."
-        )
-
-
 def upgrade() -> None:
     conn = op.get_bind()
     if conn.dialect.name == "postgresql":

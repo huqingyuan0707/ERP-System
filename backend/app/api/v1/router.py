@@ -8,6 +8,7 @@ from app.api.v1.endpoints import (
     auth,
     configs,
     customer,
+    dashboard,
     dicts,
     export,
     goods,
@@ -80,6 +81,7 @@ api_router.include_router(auth.router)
 api_router.include_router(system.router)
 api_router.include_router(dicts.router)
 api_router.include_router(configs.router)
+api_router.include_router(dashboard.router)
 # 导入导出包含 /base/goods/export、/base/goods/import 等静态路径，
 # 必须先于 goods.router 注册，否则会被 /base/goods/{goods_id} 当作动态参数匹配（422）
 api_router.include_router(export.router)

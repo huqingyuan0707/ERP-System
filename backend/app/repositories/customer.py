@@ -85,7 +85,10 @@ class CustomerRepository(BaseRepository[BdCustomer]):
         return self._apply_tenant_filter(stmt).order_by(BdCustomer.id.desc())
 
     async def list_selectable(self) -> list[BdCustomer]:
-        """返回启用状态的客户；停用客户不会出现在新单据的可选列表中。"""
+        """返回启用状态的客户；停用客户不会出现在新单据的可选列表中。
+
+        重写父类方法以添加特定的排序逻辑（按编码升序）。
+        """
         stmt = (
             select(BdCustomer)
             .where(BdCustomer.is_deleted.is_(False))
@@ -114,34 +117,34 @@ class CustomerRepository(BaseRepository[BdCustomer]):
         """返回该客户是否存在未结清销售订单；销售订单表未创建时返回 False。"""
         if SALES_ORDER_TABLE not in await self.existing_tables():
             return False
+        if self.tenant_id is None:
+            # 租户隔离：未提供tenant_id时拒绝查询，避免跨租户数据泄露
+            return False
         closed = ", ".join(f"'{status}'" for status in CLOSED_ORDER_STATUSES)
-        tenant_clause = (
-            f"AND tenant_id = {self.tenant_id}" if self.tenant_id is not None else ""
-        )
         stmt = text(
             f"SELECT 1 FROM {SALES_ORDER_TABLE} "
             "WHERE customer_id = :customer_id "
             "AND is_deleted IS NOT TRUE "
-            f"{tenant_clause} "
+            "AND tenant_id = :tenant_id "
             f"AND status NOT IN ({closed}) LIMIT 1"
         )
-        result = await self.db.execute(stmt, {"customer_id": customer_id})
+        result = await self.db.execute(stmt, {"customer_id": customer_id, "tenant_id": self.tenant_id})
         return result.first() is not None
 
     async def has_outbound(self, customer_id: int) -> bool:
         """返回该客户是否存在销售出库单；出库表未创建时返回 False。"""
         if SALES_OUTBOUND_TABLE not in await self.existing_tables():
             return False
-        tenant_clause = (
-            f"AND tenant_id = {self.tenant_id}" if self.tenant_id is not None else ""
-        )
+        if self.tenant_id is None:
+            # 租户隔离：未提供tenant_id时拒绝查询，避免跨租户数据泄露
+            return False
         stmt = text(
             f"SELECT 1 FROM {SALES_OUTBOUND_TABLE} "
             "WHERE customer_id = :customer_id "
             "AND is_deleted IS NOT TRUE "
-            f"{tenant_clause} LIMIT 1"
+            "AND tenant_id = :tenant_id LIMIT 1"
         )
-        result = await self.db.execute(stmt, {"customer_id": customer_id})
+        result = await self.db.execute(stmt, {"customer_id": customer_id, "tenant_id": self.tenant_id})
         return result.first() is not None
 
     async def has_receivable(self, customer_id: int) -> bool:

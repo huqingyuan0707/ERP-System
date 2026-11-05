@@ -166,6 +166,20 @@ class WarehouseRepository(BaseRepository[BdWarehouse]):  # 将通用仓储绑定
         rows = (await self.db.execute(stmt.order_by(SysUser.id).limit(100))).all()
         return [{"value": row.id, "label": row.real_name or row.username} for row in rows]
 
+    async def list_selectable(self) -> list[BdWarehouse]:
+        """返回启用状态的仓库；停用仓库不会出现在新单据的可选列表中。
+
+        重写父类方法以添加特定的排序逻辑（按编码升序）。
+        """
+        stmt = (
+            select(BdWarehouse)
+            .where(BdWarehouse.is_deleted.is_(False))
+            .where(BdWarehouse.status == 1)
+            .order_by(BdWarehouse.code.asc())
+        )
+        stmt = self._apply_tenant_filter(stmt)
+        return list((await self.db.execute(stmt)).scalars().all())
+
     async def has_stock(self, warehouse_id: int) -> bool:  # 查询指定仓库是否仍有库存。
         """返回仓库是否存在未删除且账面数量或锁定数量非零的库存记录。
 

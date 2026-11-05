@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.models.sys import SysOperLog
 from app.repositories.base import BaseRepository
@@ -39,3 +39,17 @@ class OperLogRepository(BaseRepository[SysOperLog]):
         if end_date is not None:
             stmt = stmt.where(SysOperLog.created_at <= end_date)
         return await self.paginate(stmt, page, page_size)
+
+    async def delete_before_date(self, before_date: datetime) -> int:
+        """删除指定日期之前的操作日志，返回删除的记录数。
+
+        用于定期清理历史日志，保留最近一段时间的数据即可。
+        """
+        stmt = select(SysOperLog).where(SysOperLog.created_at < before_date)
+        entities = (await self.db.execute(stmt)).scalars().all()
+        count = len(entities)
+        for entity in entities:
+            await self.db.delete(entity)
+        if count > 0:
+            await self.db.flush()
+        return count
