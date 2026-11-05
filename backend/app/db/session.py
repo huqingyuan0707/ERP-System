@@ -3,16 +3,22 @@
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
 
-# 判断是否为SQLite数据库
-is_sqlite = "sqlite" in settings.DATABASE_URL.lower()
+# 判断是否为SQLite数据库（使用URL解析避免子串误判）
+try:
+    from sqlalchemy.engine.url import make_url
+    db_url = make_url(settings.DATABASE_URL)
+    is_sqlite = db_url.drivername == "sqlite"
+except Exception:
+    # 解析失败时保守判断
+    is_sqlite = settings.DATABASE_URL.startswith("sqlite")
 
-# 测试环境使用NullPool，生产环境使用QueuePool
-# SQLite不使用连接池参数，PostgreSQL在生产环境使用QueuePool
+# 测试环境使用NullPool，生产环境使用默认连接池
+# SQLite不使用连接池参数，PostgreSQL在生产环境使用默认连接池
 if settings.TESTING or is_sqlite:
     # 测试环境或SQLite：使用NullPool，不传递连接池参数
     engine = create_async_engine(
@@ -22,12 +28,12 @@ if settings.TESTING or is_sqlite:
         poolclass=NullPool,
     )
 else:
-    # 生产环境PostgreSQL：使用QueuePool，配置连接池参数
+    # 生产环境PostgreSQL：使用默认连接池，配置连接池参数
+    # asyncio引擎不支持QueuePool，使用默认的AsyncAdaptedQueuePool
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=False,
         pool_pre_ping=True,
-        poolclass=QueuePool,
         pool_size=5,  # 连接池大小
         max_overflow=10,  # 最大溢出连接数
         pool_recycle=3600,  # 连接回收时间（秒）

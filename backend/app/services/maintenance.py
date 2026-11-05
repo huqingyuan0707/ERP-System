@@ -2,8 +2,11 @@
 
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.idempotency import IdempotencyKey
+from app.models.sys import SysOperLog
 from app.repositories.idempotency import IdempotencyRepository
 from app.repositories.oper_log import OperLogRepository
 
@@ -72,10 +75,6 @@ class MaintenanceService:
             "active_count": 未过期记录数
         }
         """
-        from sqlalchemy import func, select
-
-        from app.models.idempotency import IdempotencyKey
-
         now = datetime.now(UTC)
 
         # 总记录数
@@ -107,10 +106,6 @@ class MaintenanceService:
             "last_90_days": 最近90天记录数
         }
         """
-        from sqlalchemy import func, select
-
-        from app.models.sys import SysOperLog
-
         now = datetime.now(UTC)
 
         # 总记录数

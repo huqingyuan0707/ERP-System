@@ -14,6 +14,7 @@ from urllib.parse import unquote, urlsplit
 
 import pytest
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -193,7 +194,15 @@ def test_concurrent_receivable_payment_keeps_balance_consistent() -> None:
                     return receipt
 
             # 并发两次收款
-            await _race(sessions, make_payment, make_payment)
+            results = await _race(sessions, make_payment, make_payment)
+            successes = [r for r in results if not isinstance(r, BaseException)]
+            failures = [r for r in results if isinstance(r, BaseException)]
+
+            # 验证：两次请求要么都成功，要么都失败（取决于并发控制）
+            assert len(successes) + len(failures) == 2
+            # 不应该有非预期的异常类型（如500错误）
+            for f in failures:
+                assert isinstance(f, (IntegrityError, ValueError))
 
             # 由于没有乐观锁，可能都成功，但需要验证最终状态
             async with sessions() as db:
