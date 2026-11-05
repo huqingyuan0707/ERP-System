@@ -8,10 +8,12 @@ from sqlalchemy.pool import NullPool, QueuePool
 from app.core.config import settings
 
 
-# 测试环境每个用例独立事件循环，必须禁用连接池，否则会跨循环复用连接
-# 生产环境使用QueuePool，配置合理的连接池大小
-if settings.TESTING:
-    # SQLite/测试环境：使用NullPool，不传递连接池参数
+# 判断是否为SQLite数据库
+is_sqlite = "sqlite" in settings.DATABASE_URL.lower()
+
+# SQLite不使用连接池参数，PostgreSQL使用QueuePool
+if is_sqlite:
+    # SQLite：使用NullPool，不传递连接池参数
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=False,
@@ -19,7 +21,7 @@ if settings.TESTING:
         poolclass=NullPool,
     )
 else:
-    # 生产环境：使用QueuePool，配置连接池参数
+    # PostgreSQL：使用QueuePool，配置连接池参数
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=False,
