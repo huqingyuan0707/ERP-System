@@ -30,6 +30,8 @@ async def get_dashboard_overview(
 ) -> ApiResponse[DashboardOverview]:
     """获取经营看板概览数据，包括销售、库存、应收应付、客户供应商统计。"""
     tenant_id = current_user.tenant_id
+    today = date.today()
+    month_start = date(today.year, today.month, 1)  # noqa: F841 - 待销售模块实现后使用
 
     # 今日销售额和单数（TODO: 等销售模块实现后从销售表查询）
     today_sales_amount = Decimal("0")
