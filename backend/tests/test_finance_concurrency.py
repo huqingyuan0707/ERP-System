@@ -7,13 +7,13 @@ import os
 import re
 import uuid
 from collections.abc import Awaitable, Callable
-from datetime import datetime, date
+from datetime import date
 from decimal import Decimal
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
 import pytest
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -53,15 +53,15 @@ if POSTGRES_URL is None:
         allow_module_level=True,
     )
 
-from app.core.exceptions import AppException, ErrorCode  # noqa: E402
 from app.models.base_data import BdCustomer, BdSupplier  # noqa: E402
 from app.models.finance import (  # noqa: E402
-    FinReceivable,
     FinPayable,
-    FinReceipt,
     FinPayment,
+    FinReceipt,
+    FinReceivable,
 )
 from app.models.sys import SysOperLog  # noqa: E402
+
 
 SessionFactory = async_sessionmaker[AsyncSession]
 Worker = Callable[[AsyncSession], Awaitable[Any]]
@@ -193,26 +193,25 @@ def test_concurrent_receivable_payment_keeps_balance_consistent() -> None:
                     return receipt
 
             # 并发两次收款
-            results = await _race(sessions, make_payment, make_payment)
-            successes = [result for result in results if not isinstance(result, BaseException)]
-            failures = [result for result in results if isinstance(result, BaseException)]
-            
+            await _race(sessions, make_payment, make_payment)
+
             # 由于没有乐观锁，可能都成功，但需要验证最终状态
             async with sessions() as db:
                 receivable = await db.get(FinReceivable, ids["receivable_id"])
-                receipt_count = await db.scalar(
-                    select(func.count())
-                    .select_from(FinReceipt)
-                    .where(FinReceipt.tenant_id == ids["tenant_id"])
-                )
                 assert receivable is not None
                 # 验证余额一致性：amount = received_amount + unreceived_amount
-                assert receivable.amount == receivable.received_amount + receivable.unreceived_amount
+                assert (
+                    receivable.amount
+                    == receivable.received_amount + receivable.unreceived_amount
+                )
                 # 验证金额非负
                 assert receivable.amount >= 0
                 assert receivable.received_amount >= 0
                 # unreceived_amount可以为负（表示应退/预收）
-                assert receivable.received_amount <= receivable.amount + Decimal("10000")  # 允许一定误差
+                assert (
+                    receivable.received_amount
+                    <= receivable.amount + Decimal("10000")
+                )  # 允许一定误差
         finally:
             if ids is not None:
                 await _cleanup_finance_tenant(sessions, ids["tenant_id"])
@@ -254,15 +253,10 @@ def test_concurrent_payable_payment_keeps_balance_consistent() -> None:
                     return payment
 
             # 并发两次付款
-            results = await _race(sessions, make_payment, make_payment)
-            
+            await _race(sessions, make_payment, make_payment)
+
             async with sessions() as db:
                 payable = await db.get(FinPayable, ids["payable_id"])
-                payment_count = await db.scalar(
-                    select(func.count())
-                    .select_from(FinPayment)
-                    .where(FinPayment.tenant_id == ids["tenant_id"])
-                )
                 assert payable is not None
                 # 验证余额一致性
                 assert payable.amount == payable.paid_amount + payable.unpaid_amount

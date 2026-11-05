@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.services.maintenance import MaintenanceService
 
+
 router = APIRouter(prefix="/health", tags=["健康检查"])
 
 

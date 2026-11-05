@@ -128,7 +128,9 @@ class CustomerRepository(BaseRepository[BdCustomer]):
             "AND tenant_id = :tenant_id "
             f"AND status NOT IN ({closed}) LIMIT 1"
         )
-        result = await self.db.execute(stmt, {"customer_id": customer_id, "tenant_id": self.tenant_id})
+        result = await self.db.execute(
+            stmt, {"customer_id": customer_id, "tenant_id": self.tenant_id}
+        )
         return result.first() is not None
 
     async def has_outbound(self, customer_id: int) -> bool:
@@ -144,7 +146,9 @@ class CustomerRepository(BaseRepository[BdCustomer]):
             "AND is_deleted IS NOT TRUE "
             "AND tenant_id = :tenant_id LIMIT 1"
         )
-        result = await self.db.execute(stmt, {"customer_id": customer_id, "tenant_id": self.tenant_id})
+        result = await self.db.execute(
+            stmt, {"customer_id": customer_id, "tenant_id": self.tenant_id}
+        )
         return result.first() is not None
 
     async def has_receivable(self, customer_id: int) -> bool:

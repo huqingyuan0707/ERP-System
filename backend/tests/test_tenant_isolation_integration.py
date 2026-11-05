@@ -8,11 +8,10 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
-from typing import Any
 from urllib.parse import unquote, urlsplit
 
 import pytest
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -52,13 +51,13 @@ if POSTGRES_URL is None:
         allow_module_level=True,
     )
 
-from app.core.exceptions import AppException, ErrorCode  # noqa: E402
-from app.models.base_data import BdCustomer, BdSupplier, BdGoods, BdWarehouse  # noqa: E402
+from app.models.base_data import BdCustomer, BdGoods, BdSupplier, BdWarehouse  # noqa: E402
 from app.models.inventory import InvStock  # noqa: E402
 from app.models.sys import SysUser  # noqa: E402
 from app.repositories.customer import CustomerRepository  # noqa: E402
-from app.repositories.supplier import SupplierRepository  # noqa: E402
 from app.repositories.inventory import InventoryRepository  # noqa: E402
+from app.repositories.supplier import SupplierRepository  # noqa: E402
+
 
 SessionFactory = async_sessionmaker[AsyncSession]
 
@@ -282,8 +281,8 @@ def test_tenant_isolation_with_soft_delete() -> None:
         tenant2_id = uuid.uuid4().int % 8_000_000_000 + 1_000_000_000
         try:
             data1 = await _create_tenant_data(sessions, tenant1_id, "T1")
-            data2 = await _create_tenant_data(sessions, tenant2_id, "T2")
-            
+            await _create_tenant_data(sessions, tenant2_id, "T2")
+
             # 软删除租户1的客户
             async with sessions() as db:
                 customer = await db.get(BdCustomer, data1["customer_id"])
@@ -326,14 +325,16 @@ def test_cross_tenant_reference_prevention() -> None:
         tenant1_id = uuid.uuid4().int % 8_000_000_000 + 1_000_000_000
         tenant2_id = uuid.uuid4().int % 8_000_000_000 + 1_000_000_000
         try:
-            data1 = await _create_tenant_data(sessions, tenant1_id, "T1")
+            await _create_tenant_data(sessions, tenant1_id, "T1")
             data2 = await _create_tenant_data(sessions, tenant2_id, "T2")
-            
+
             # 尝试用租户1的库存仓储访问租户2的仓库和商品
             async with sessions() as db:
                 repo1 = InventoryRepository(db, tenant_id=tenant1_id)
                 # 尝试获取租户2的仓库
-                warehouse2 = await repo1.get_warehouse_for_update(data2["warehouse_id"])
+                warehouse2 = await repo1.get_warehouse_for_update(
+                    data2["warehouse_id"]
+                )
                 assert warehouse2 is None  # 应该返回None，因为租户不匹配
                 
                 # 尝试获取租户2的商品

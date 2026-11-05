@@ -1,8 +1,7 @@
 """经营看板API endpoint。"""
 
+from datetime import date, timedelta
 from decimal import Decimal
-from datetime import date, datetime, timedelta
-from typing import Any
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
@@ -12,13 +11,13 @@ from app.api.v1.endpoints.auth import get_current_user
 from app.core.deps import get_db
 from app.models.base_data import BdCustomer, BdSupplier
 from app.models.inventory import InvStock
+from app.models.sys import SysUser
 from app.schemas.common import ApiResponse, success_response
 from app.schemas.dashboard import (
     DashboardOverview,
     InventoryCategoryItem,
     SalesTrendItem,
 )
-from app.models.sys import SysUser
 
 
 router = APIRouter(prefix="/dashboard", tags=["经营看板"])
@@ -31,9 +30,8 @@ async def get_dashboard_overview(
 ) -> ApiResponse[DashboardOverview]:
     """获取经营看板概览数据，包括销售、库存、应收应付、客户供应商统计。"""
     tenant_id = current_user.tenant_id
-    today = date.today()
-    month_start = date(today.year, today.month, 1)
-    
+    date.today()
+
     # 今日销售额和单数（TODO: 等销售模块实现后从销售表查询）
     today_sales_amount = Decimal("0")
     today_sales_count = 0
@@ -108,7 +106,11 @@ async def get_dashboard_overview(
     return success_response(overview)
 
 
-@router.get("/sales-trend", response_model=ApiResponse[list[SalesTrendItem]], summary="获取销售趋势")
+@router.get(
+    "/sales-trend",
+    response_model=ApiResponse[list[SalesTrendItem]],
+    summary="获取销售趋势",
+)
 async def get_sales_trend(
     days: int = 30,
     db: AsyncSession = Depends(get_db),
@@ -136,7 +138,11 @@ async def get_sales_trend(
     return success_response(trend_data)
 
 
-@router.get("/inventory-category", response_model=ApiResponse[list[InventoryCategoryItem]], summary="获取库存分类统计")
+@router.get(
+    "/inventory-category",
+    response_model=ApiResponse[list[InventoryCategoryItem]],
+    summary="获取库存分类统计",
+)
 async def get_inventory_category(
     db: AsyncSession = Depends(get_db),
     current_user: SysUser = Depends(get_current_user),
