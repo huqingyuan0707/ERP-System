@@ -22,7 +22,7 @@ from app.core.exceptions import AppException, ErrorCode
 from app.db.session import AsyncSessionLocal
 from app.main import app
 from app.models.base_data import BdCustomer
-from app.models.finance import ArApRecord
+from app.models.finance import FinReceivable
 from app.models.sys import SysOperLog, SysUser
 from app.services.customer import CustomerService
 
@@ -68,7 +68,9 @@ async def _cleanup(customer_ids):
     if not customer_ids:
         return
     async with AsyncSessionLocal() as session:
-        await session.execute(delete(ArApRecord).where(ArApRecord.partner_id.in_(customer_ids)))
+        await session.execute(
+            delete(FinReceivable).where(FinReceivable.customer_id.in_(customer_ids))
+        )
         await session.execute(delete(BdCustomer).where(BdCustomer.id.in_(customer_ids)))
         await session.commit()
 
@@ -177,16 +179,16 @@ async def _scenario():
             # ------------------------------------------------------------------
             async with AsyncSessionLocal() as session:
                 session.add(
-                    ArApRecord(
+                    FinReceivable(
                         tenant_id=1,
-                        partner_type=2,  # 客户
-                        partner_id=customer_a["id"],
-                        record_type=2,  # 应收
-                        source_type="sal_out",
+                        customer_id=customer_a["id"],
+                        source_type="sales_outbound",
                         source_no=f"SAL_TEST_{suffix}",
+                        bill_date=date(2026, 11, 1),
                         amount=Decimal("200"),
-                        status=1,
-                        biz_date="20261101",
+                        received_amount=Decimal("0"),
+                        unreceived_amount=Decimal("200"),
+                        status=0,
                     )
                 )
                 await session.commit()
@@ -197,7 +199,7 @@ async def _scenario():
             # 移除应收记录后再次删除，应成功软删
             async with AsyncSessionLocal() as session:
                 await session.execute(
-                    delete(ArApRecord).where(ArApRecord.partner_id == customer_a["id"])
+                    delete(FinReceivable).where(FinReceivable.customer_id == customer_a["id"])
                 )
                 await session.commit()
             resp = await client.delete(f"{API}/base/customers/{customer_a['id']}", headers=headers)
@@ -241,16 +243,16 @@ async def _scenario():
 
             async with AsyncSessionLocal() as session:
                 session.add(
-                    ArApRecord(
+                    FinReceivable(
                         tenant_id=1,
-                        partner_type=2,
-                        partner_id=customer_b["id"],
-                        record_type=2,
-                        source_type="sal_out",
+                        customer_id=customer_b["id"],
+                        source_type="sales_outbound",
                         source_no=f"SAL2_TEST_{suffix}",
+                        bill_date=date(2026, 11, 1),
                         amount=Decimal("200"),
-                        status=1,
-                        biz_date="20261101",
+                        received_amount=Decimal("0"),
+                        unreceived_amount=Decimal("200"),
+                        status=0,
                     )
                 )
                 await session.commit()

@@ -19,7 +19,7 @@ from app.core.deps import get_current_user, get_db
 from app.core.exceptions import AppException, register_exception_handlers
 from app.db.base import Base
 from app.models.base_data import BdWarehouse
-from app.models.finance import ArApRecord
+from app.models.finance import FinReceivable
 from app.models.sys import SysOperLog, SysUser
 from app.schemas.config import ConfigUpdateItem
 from app.schemas.customer import CustomerCreate, CustomerUpdate
@@ -136,27 +136,29 @@ def test_credit_zero_unlimited_and_mode_results(mode):
             customer_out = await service.create_customer(CustomerCreate(name="额度"), 1)
             customer_id = customer_out.id
             db.add(
-                ArApRecord(
+                FinReceivable(
                     tenant_id=1,
-                    partner_type=2,
-                    partner_id=customer_id,
-                    record_type=2,
+                    customer_id=customer_id,
                     source_type="test",
                     source_no="AR-1",
+                    bill_date=date(2026, 11, 1),
                     amount=Decimal("80"),
-                    biz_date="20261101",
+                    received_amount=Decimal("0"),
+                    unreceived_amount=Decimal("80"),
+                    status=0,
                 )
             )
             db.add(
-                ArApRecord(
+                FinReceivable(
                     tenant_id=2,
-                    partner_type=2,
-                    partner_id=customer_id,
-                    record_type=2,
+                    customer_id=customer_id,
                     source_type="test",
                     source_no="AR-2",
+                    bill_date=date(2026, 11, 1),
                     amount=Decimal("9000"),
-                    biz_date="20261101",
+                    received_amount=Decimal("0"),
+                    unreceived_amount=Decimal("9000"),
+                    status=0,
                 )
             )
             await db.commit()

@@ -12,16 +12,13 @@ from sqlalchemy import (  # 查询类型、绑定参数与读写语句。
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.base_data import BdSupplier  # 供应商表 bd_supplier 的 ORM 模型。
-from app.models.finance import ArApRecord  # 应收应付记录 fin_ar_ap，用于应付引用与余额。
+from app.models.finance import FinPayable  # 应付表 fin_payable，用于应付引用与余额。
 from app.repositories.base import BaseRepository  # 复用数据库会话与分页等通用操作。
 from app.schemas.supplier import SupplierQuery  # 供应商列表的分页、关键字和状态参数。
 
 
 # 采购订单中表示"已结清"的状态；其余状态都属于未结采购订单，供应商不可删除。
 CLOSED_ORDER_STATUSES = ("完成", "关闭")
-
-# 应付记录中业务方类型：1=供应商（应付），用于区分应收与应付。
-PAYABLE_PARTNER_TYPE_SUPPLIER = 1
 
 # 引用检查涉及的外部表；这些表由采购模块创建，尚未创建时跳过对应检查。
 PURCHASE_ORDER_TABLE = "pur_order"  # 采购订单表，判断是否存在未结采购订单。
@@ -192,48 +189,39 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
         return result.first() is not None  # 有记录返回 True।
 
     async def has_payable(self, supplier_id: int) -> bool:  # 判断是否存在应付记录。
-        """返回该供应商是否存在未作废的应付记录（fin_ar_ap，partner_type=1）。
+        """返回该供应商是否存在应付记录（fin_payable）。
 
-        只要存在应付记录就说明双方已有账务往来，即使已全额核销，
+        只要存在应付记录就说明双方已有账务往来，即使已全额付款，
         也应保留档案以备对账，因此同样阻止删除。
         """
-        # fin_ar_ap 已随财务模块落成，无需再判断表是否存在，按 ORM 查询更安全。
-        stmt = (
-            select(ArApRecord.id)  # 只取主键判断是否存在，不必返回整行。
-            .where(ArApRecord.partner_type == PAYABLE_PARTNER_TYPE_SUPPLIER)  # 仅供应商应付。
-            .where(ArApRecord.record_type == 1)  # 应收不得计入应付保护/余额。
-            .where(ArApRecord.partner_id == supplier_id)  # 限定当前供应商。
-            .where(ArApRecord.status != 4)  # 排除已作废记录。
-        )  # 未核销/部分核销/已对账都算存在应付往来。
-        if self.tenant_id is not None:  # fin_ar_ap 含租户列，按当前租户隔离。
-            stmt = stmt.where(ArApRecord.tenant_id == self.tenant_id)
+        # 只取主键判断存在，不必返回整行。
+        stmt = select(FinPayable.id).where(FinPayable.supplier_id == supplier_id)
+        if self.tenant_id is not None:  # fin_payable 含租户列，按当前租户隔离。
+            stmt = stmt.where(FinPayable.tenant_id == self.tenant_id)
         result = await self.db.execute(stmt.limit(1))  # 查到一行即说明存在应付。
         return result.first() is not None  # 有记录返回 True。
 
-    async def sum_unpaid_payable(  # 汇总各供应商的未核销应付金额。
+    async def sum_unpaid_payable(  # 汇总各供应商的未付应付金额。
         self,  # 使用当前事务会话查询应付表。
         supplier_ids: list[int],  # 由 Service 收集当前页供应商 ID。
-    ) -> dict[int, Decimal]:  # 返回供应商 ID 到未核销金额的映射。
-        """按 supplier_ids 汇总未核销应付余额（fin_ar_ap，partner_type=1）。
+    ) -> dict[int, Decimal]:  # 返回供应商 ID 到未付金额的映射。
+        """按 supplier_ids 汇总未付应付余额（fin_payable.unpaid_amount）。
 
-        未核销金额 = amount - reconciled_amount，已核销部分不计入应付余额；
-        作废状态（status=4）的记录不计入，调用方对缺失供应商按 0 处理。
+        未付金额由核销与退货冲减事务维护，可为负（负数表示预付/应退），
+        调用方对缺失供应商按 0 处理。
         """
         if not supplier_ids:  # 当前页没有供应商时，不必访问数据库。
             return {}  # 空映射可直接交给 Service 做余额回填。
-        stmt = (  # 按供应商分组汇总未核销金额。
+        stmt = (  # 按供应商分组汇总未付金额。
             select(
-                ArApRecord.partner_id,  # 供应商 ID。
-                func.coalesce(func.sum(ArApRecord.amount - ArApRecord.reconciled_amount), 0),
+                FinPayable.supplier_id,  # 供应商 ID。
+                func.coalesce(func.sum(FinPayable.unpaid_amount), 0),
             )
-            .where(ArApRecord.partner_type == PAYABLE_PARTNER_TYPE_SUPPLIER)  # 仅供应商应付。
-            .where(ArApRecord.record_type == 1)  # 应收不得计入应付保护/余额。
-            .where(ArApRecord.partner_id.in_(supplier_ids))  # 只统计当前页涉及的供应商。
-            .where(ArApRecord.status != 4)  # 排除已作废记录。
-            .group_by(ArApRecord.partner_id)  # 每个供应商一行汇总结果。
-        )  # fin_ar_ap 已存在，无需表存在性判断。
+            .where(FinPayable.supplier_id.in_(supplier_ids))  # 只统计当前页涉及的供应商。
+            .group_by(FinPayable.supplier_id)  # 每个供应商一行汇总结果。
+        )
         if self.tenant_id is not None:  # 按当前租户隔离应付余额。
-            stmt = stmt.where(ArApRecord.tenant_id == self.tenant_id)
+            stmt = stmt.where(FinPayable.tenant_id == self.tenant_id)
         rows = (await self.db.execute(stmt)).all()  # 读取汇总结果。
         return {  # 转成 ID 到金额的字典，便于按供应商回填。
             int(row[0]): Decimal(str(row[1] or 0))  # 数据库可能返回 Decimal/float，统一转 Decimal。
