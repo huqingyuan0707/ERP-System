@@ -67,3 +67,20 @@ class IdempotencyRepository:
         if entity is not None:
             await self._db.delete(entity)
             await self._db.flush()
+
+    async def delete_expired(self) -> int:
+        """删除已过期的幂等键记录，返回删除的记录数。
+
+        用于定期清理任务，防止幂等键表无限增长。
+        """
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC)
+        stmt = select(IdempotencyKey).where(IdempotencyKey.expires_at <= now)
+        entities = (await self._db.execute(stmt)).scalars().all()
+        count = len(entities)
+        for entity in entities:
+            await self._db.delete(entity)
+        if count > 0:
+            await self._db.flush()
+        return count

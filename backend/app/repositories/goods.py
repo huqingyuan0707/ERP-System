@@ -268,6 +268,20 @@ class UnitRepository(BaseRepository[BdUnit]):
             stmt = stmt.where(BdUnit.name.ilike(f"%{keyword}%"))
         return list((await self.db.execute(stmt.order_by(BdUnit.id))).scalars().all())
 
+    async def list_selectable(self) -> list[BdUnit]:
+        """返回启用状态的计量单位；停用单位不会出现在新单据的可选列表中。
+
+        重写父类方法以添加特定的排序逻辑（按编码升序）。
+        """
+        stmt = (
+            select(BdUnit)
+            .where(BdUnit.is_deleted.is_(False))
+            .where(BdUnit.status == 1)
+            .order_by(BdUnit.id.asc())
+        )
+        stmt = self._apply_tenant_filter(stmt)
+        return list((await self.db.execute(stmt)).scalars().all())
+
     async def get_by_name(self, name: str) -> BdUnit | None:
         stmt = select(BdUnit).where(BdUnit.name == name, BdUnit.tenant_id == self.tenant_id)
         return (await self.db.execute(stmt)).scalar_one_or_none()

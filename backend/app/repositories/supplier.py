@@ -116,6 +116,7 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
         """返回启用状态的供应商；停用供应商不会出现在新单据的可选列表中。
 
         历史单据仍按 supplier_id 关联原供应商，停用不影响既有单据的查询与展示。
+        重写父类方法以添加特定的排序逻辑（按编码升序）。
         """
         stmt = (  # 只返回未删除且处于启用状态的供应商。
             select(BdSupplier)  # 返回完整供应商对象，供单据回填名称。
@@ -153,24 +154,18 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
         """
         if PURCHASE_ORDER_TABLE not in await self.existing_tables():  # 采购模块尚未上线。
             return False  # 没有订单表就没有引用，跳过检查。
+        if self.tenant_id is None:
+            # 租户隔离：未提供tenant_id时拒绝查询，避免跨租户数据泄露
+            return False
         closed = ", ".join(f"'{status}'" for status in CLOSED_ORDER_STATUSES)
-        if self.tenant_id is not None:
-            stmt = text(
-                f"SELECT 1 FROM {PURCHASE_ORDER_TABLE} "
-                "WHERE supplier_id = :supplier_id "
-                "AND is_deleted IS NOT TRUE "
-                "AND tenant_id = :tenant_id "
-                f"AND status NOT IN ({closed}) LIMIT 1"
-            )
-            result = await self.db.execute(stmt, {"supplier_id": supplier_id, "tenant_id": self.tenant_id})
-        else:
-            stmt = text(
-                f"SELECT 1 FROM {PURCHASE_ORDER_TABLE} "
-                "WHERE supplier_id = :supplier_id "
-                "AND is_deleted IS NOT TRUE "
-                f"AND status NOT IN ({closed}) LIMIT 1"
-            )
-            result = await self.db.execute(stmt, {"supplier_id": supplier_id})
+        stmt = text(
+            f"SELECT 1 FROM {PURCHASE_ORDER_TABLE} "
+            "WHERE supplier_id = :supplier_id "
+            "AND is_deleted IS NOT TRUE "
+            "AND tenant_id = :tenant_id "
+            f"AND status NOT IN ({closed}) LIMIT 1"
+        )
+        result = await self.db.execute(stmt, {"supplier_id": supplier_id, "tenant_id": self.tenant_id})
         return result.first() is not None  # 有记录返回 True。
 
     async def has_inbound(self, supplier_id: int) -> bool:  # 判断是否已有历史入库单。
@@ -181,21 +176,16 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
         """
         if PURCHASE_INBOUND_TABLE not in await self.existing_tables():  # 采购模块尚未上线。
             return False  # 没有入库表就没有引用，跳过检查。
-        if self.tenant_id is not None:
-            stmt = text(
-                f"SELECT 1 FROM {PURCHASE_INBOUND_TABLE} "
-                "WHERE supplier_id = :supplier_id "
-                "AND is_deleted IS NOT TRUE "
-                "AND tenant_id = :tenant_id LIMIT 1"
-            )
-            result = await self.db.execute(stmt, {"supplier_id": supplier_id, "tenant_id": self.tenant_id})
-        else:
-            stmt = text(
-                f"SELECT 1 FROM {PURCHASE_INBOUND_TABLE} "
-                "WHERE supplier_id = :supplier_id "
-                "AND is_deleted IS NOT TRUE LIMIT 1"
-            )
-            result = await self.db.execute(stmt, {"supplier_id": supplier_id})
+        if self.tenant_id is None:
+            # 租户隔离：未提供tenant_id时拒绝查询，避免跨租户数据泄露
+            return False
+        stmt = text(
+            f"SELECT 1 FROM {PURCHASE_INBOUND_TABLE} "
+            "WHERE supplier_id = :supplier_id "
+            "AND is_deleted IS NOT TRUE "
+            "AND tenant_id = :tenant_id LIMIT 1"
+        )
+        result = await self.db.execute(stmt, {"supplier_id": supplier_id, "tenant_id": self.tenant_id})
         return result.first() is not None
 
     async def has_payable(self, supplier_id: int) -> bool:  # 判断是否存在应付记录。

@@ -71,3 +71,16 @@ class BaseRepository(Generic[ModelT]):
         rows_stmt = stmt.limit(page_size).offset(max(page - 1, 0) * page_size)
         rows = list((await self.db.execute(rows_stmt)).all())
         return rows, total
+
+    async def list_selectable(self) -> list[ModelT]:
+        """返回启用状态的记录；停用记录不会出现在新单据的可选列表中。
+
+        假设模型具有 status 字段（1=启用，0=停用）和 is_deleted 字段。
+        子类可以重写此方法以提供自定义的查询逻辑。
+        """
+        stmt = select(self.model).where(
+            self.model.is_deleted.is_(False),  # type: ignore[attr-defined]
+            self.model.status == 1,  # type: ignore[attr-defined]
+        )
+        stmt = self._apply_tenant_filter(stmt)
+        return list((await self.db.execute(stmt)).scalars().all())
