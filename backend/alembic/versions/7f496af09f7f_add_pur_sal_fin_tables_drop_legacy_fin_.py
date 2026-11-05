@@ -850,7 +850,8 @@ def upgrade() -> None:
                existing_type=sa.NUMERIC(precision=18, scale=4),
                type_=sa.Numeric(precision=18, scale=2),
                existing_nullable=False)
-    op.drop_index(op.f('uq_inv_stock_warehouse_goods'), table_name='inv_stock', postgresql_where='(is_deleted = false)')
+    # 删除旧的唯一索引，添加新的 tenant_id 包含的索引
+    op.drop_index('uq_inv_stock_warehouse_goods_tenant', table_name='inv_stock')
     op.create_index(op.f('ix_inv_stock_tenant_id'), 'inv_stock', ['tenant_id'], unique=False)
     op.add_column('inv_stock_flow', sa.Column('operator_id', sa.BigInteger().with_variant(sa.Integer(), 'sqlite'), nullable=True))
     op.alter_column('inv_stock_flow', 'tenant_id',
@@ -909,7 +910,7 @@ def downgrade() -> None:
                existing_server_default=sa.text("'1'::bigint"))
     op.drop_column('inv_stock_flow', 'operator_id')
     op.drop_index(op.f('ix_inv_stock_tenant_id'), table_name='inv_stock')
-    op.create_index(op.f('uq_inv_stock_warehouse_goods'), 'inv_stock', ['warehouse_id', 'goods_id'], unique=True, postgresql_where='(is_deleted = false)')
+    op.create_index('uq_inv_stock_warehouse_goods_tenant', 'inv_stock', ['warehouse_id', 'goods_id', 'tenant_id'], unique=True, postgresql_where='(is_deleted = false)')
     op.alter_column('inv_stock', 'avg_cost',
                existing_type=sa.Numeric(precision=18, scale=2),
                type_=sa.NUMERIC(precision=18, scale=4),
