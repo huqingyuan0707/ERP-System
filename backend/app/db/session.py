@@ -11,9 +11,10 @@ from app.core.config import settings
 # 判断是否为SQLite数据库
 is_sqlite = "sqlite" in settings.DATABASE_URL.lower()
 
-# SQLite不使用连接池参数，PostgreSQL使用QueuePool
-if is_sqlite:
-    # SQLite：使用NullPool，不传递连接池参数
+# 测试环境使用NullPool，生产环境使用QueuePool
+# SQLite不使用连接池参数，PostgreSQL在生产环境使用QueuePool
+if settings.TESTING or is_sqlite:
+    # 测试环境或SQLite：使用NullPool，不传递连接池参数
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=False,
@@ -21,7 +22,7 @@ if is_sqlite:
         poolclass=NullPool,
     )
 else:
-    # PostgreSQL：使用QueuePool，配置连接池参数
+    # 生产环境PostgreSQL：使用QueuePool，配置连接池参数
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=False,
