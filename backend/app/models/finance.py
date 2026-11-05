@@ -74,10 +74,24 @@ class FinReceivable(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Te
         Index("idx_receivable_customer_status", "customer_id", "status"),
         # 退货按 source_no 定位原应收冲减，必须建索引
         Index("idx_receivable_source_no", "source_no"),
+        # 幂等唯一：同一租户同一来源类型+单号只能生成一条应收，防止并发/重试确认生成重复应收
+        Index(
+            "uq_receivable_source",
+            "tenant_id",
+            "source_type",
+            "source_no",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+            sqlite_where=text("is_deleted = 0"),
+        ),
         # 冲减后 amount 必须保持非负，数据库层兜底
         CheckConstraint("amount >= 0", name="ck_receivable_amount_nonnegative"),
+        # 已收不能超过应收金额，避免已收大于应收导致账实不符
+        CheckConstraint("received_amount <= amount", name="ck_receivable_received_le_amount"),
         # 已收非负
         CheckConstraint("received_amount >= 0", name="ck_receivable_received_nonnegative"),
+        # 到期日不能早于单据日期
+        CheckConstraint("due_date >= bill_date", name="ck_receivable_due_ge_bill"),
     )
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)  # 主键
@@ -113,10 +127,28 @@ class FinPayable(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Tenan
 
     __tablename__ = "fin_payable"
     __table_args__ = (
-        Index("idx_payable_supplier_status", "supplier_id", "status"),  # 供应商 + 状态高频组合
-        Index("idx_payable_source_no", "source_no"),  # 退货按原单号定位冲减
-        CheckConstraint("amount >= 0", name="ck_payable_amount_nonnegative"),  # 冲减后保持非负
-        CheckConstraint("paid_amount >= 0", name="ck_payable_paid_nonnegative"),  # 已付非负
+        # 供应商 + 状态高频组合
+        Index("idx_payable_supplier_status", "supplier_id", "status"),
+        # 退货按原单号定位冲减
+        Index("idx_payable_source_no", "source_no"),
+        # 幂等唯一：同一租户同一来源类型+单号只能生成一条应付，防止并发/重试确认生成重复应付
+        Index(
+            "uq_payable_source",
+            "tenant_id",
+            "source_type",
+            "source_no",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+            sqlite_where=text("is_deleted = 0"),
+        ),
+        # 冲减后 amount 必须保持非负
+        CheckConstraint("amount >= 0", name="ck_payable_amount_nonnegative"),
+        # 已付不能超过应付金额，避免已付大于应付导致账实不符
+        CheckConstraint("paid_amount <= amount", name="ck_payable_paid_le_amount"),
+        # 已付非负
+        CheckConstraint("paid_amount >= 0", name="ck_payable_paid_nonnegative"),
+        # 到期日不能早于单据日期
+        CheckConstraint("due_date >= bill_date", name="ck_payable_due_ge_bill"),
     )
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)  # 主键

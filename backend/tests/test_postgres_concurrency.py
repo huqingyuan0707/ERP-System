@@ -7,6 +7,7 @@ import os
 import re
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -162,7 +163,7 @@ def _stock_change(ids: dict[str, int], *, direction: int, qty: str, source_no: s
         unit_cost=Decimal("1"),
         biz_type="pg_concurrency",
         source_no=source_no,
-        biz_time="20261102",
+        biz_time=datetime(2026, 11, 2),
     )
 
 
@@ -215,7 +216,7 @@ def test_concurrent_stock_writes_allow_at_most_one_and_keep_flow_consistent() ->
                     goods_id=lock_ids["goods_id"],
                     qty=Decimal("1"),
                     source_no=uuid.uuid4().hex,
-                    biz_time="20261102",
+                    biz_time=datetime(2026, 11, 2),
                 )
 
                 async def lock(db: AsyncSession) -> Any:
