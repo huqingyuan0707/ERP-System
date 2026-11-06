@@ -216,6 +216,10 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     stock_menu = next(menu for menu in menus if menu.perm_code == "inv:stock:list")
     statement_menu = next(menu for menu in menus if menu.perm_code == "fin:statement:list")
     report_menu = next(menu for menu in menus if menu.perm_code == "rpt:finance:list")
+    # P-01 采购申请：按钮权限挂在「采购申请」菜单下（菜单本身已在上面种子里定义）
+    apply_menu = next(menu for menu in menus if menu.perm_code == "pur:apply:list")
+    # P-02 采购订单：按钮权限挂在「采购订单」菜单下
+    order_menu = next(menu for menu in menus if menu.perm_code == "pur:order:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -254,6 +258,18 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("导出对账单", "fin:statement:export", statement_menu.id, 7),
         _button("查看操作日志", "sys:log:view", user_menu.id, 6),
         _button("查看异步任务", "sys:task:view", user_menu.id, 7),
+        # P-01 采购申请：新增/修改/提交/审核（查看权限复用菜单上的 pur:apply:list）
+        _button("新增采购申请", "pur:apply:add", apply_menu.id, 1),
+        _button("修改采购申请", "pur:apply:edit", apply_menu.id, 2),
+        _button("提交采购申请", "pur:apply:submit", apply_menu.id, 3),
+        _button("审核采购申请", "pur:apply:audit", apply_menu.id, 4),
+        _button("删除采购申请", "pur:apply:delete", apply_menu.id, 5),
+        # P-02 采购订单：新增/修改/提交/审核/关闭（查看权限复用菜单上的 pur:order:list）
+        _button("新增采购订单", "pur:order:add", order_menu.id, 1),
+        _button("修改采购订单", "pur:order:edit", order_menu.id, 2),
+        _button("提交采购订单", "pur:order:submit", order_menu.id, 3),
+        _button("审核采购订单", "pur:order:audit", order_menu.id, 4),
+        _button("关闭采购订单", "pur:order:close", order_menu.id, 5),
         _button("超级权限", "*", dir_sys.id, 99),
     ]
     session.add_all(buttons)
@@ -662,4 +678,62 @@ async def _ensure_permissions(session: AsyncSession) -> None:
                 session.add(
                     SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
                 )
+    await session.flush()
+
+    # P-01 / P-02 采购按钮权限：菜单首次初始化时已播种，
+    # 老库只需补齐缺失按钮，并授权给各租户的 admin 角色（幂等，不重复插入）。
+    procurement_specs: tuple[tuple[str, tuple[tuple[str, str, int], ...]], ...] = (
+        (
+            "pur:apply:list",
+            (
+                ("新增采购申请", "pur:apply:add", 1),
+                ("修改采购申请", "pur:apply:edit", 2),
+                ("提交采购申请", "pur:apply:submit", 3),
+                ("审核采购申请", "pur:apply:audit", 4),
+                ("删除采购申请", "pur:apply:delete", 5),
+            ),
+        ),
+        (
+            "pur:order:list",
+            (
+                ("新增采购订单", "pur:order:add", 1),
+                ("修改采购订单", "pur:order:edit", 2),
+                ("提交采购订单", "pur:order:submit", 3),
+                ("审核采购订单", "pur:order:audit", 4),
+                ("关闭采购订单", "pur:order:close", 5),
+            ),
+        ),
+    )
+    for menu_code, button_specs in procurement_specs:
+        menu_id = await session.scalar(
+            select(SysPermission.id).where(SysPermission.perm_code == menu_code)
+        )
+        if menu_id is None:
+            # 菜单不存在则跳过：菜单树由种子/迁移维护，此处只补按钮
+            continue
+        menu_permissions: list[SysPermission] = []
+        for name, perm_code, sort in button_specs:
+            permission = await session.scalar(
+                select(SysPermission).where(SysPermission.perm_code == perm_code)
+            )
+            if permission is None:
+                permission = SysPermission(
+                    name=name, type=3, perm_code=perm_code, parent_id=menu_id, sort=sort
+                )
+                session.add(permission)
+                await session.flush()
+            menu_permissions.append(permission)
+
+        for admin_role in admin_roles:
+            for permission in menu_permissions:
+                granted = await session.scalar(
+                    select(SysRolePermission.role_id).where(
+                        SysRolePermission.role_id == admin_role.id,
+                        SysRolePermission.permission_id == permission.id,
+                    )
+                )
+                if granted is None:
+                    session.add(
+                        SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
+                    )
     await session.flush()

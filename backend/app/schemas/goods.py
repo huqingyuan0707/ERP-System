@@ -227,7 +227,9 @@ class GoodsQuery(PageQuery):
     """商品列表查询。"""
 
     category_id: int | None = Field(default=None, gt=0)
-    status: Literal[0, 1] | None = None
+    # 状态筛选：0 停用 / 1 启用；用 int + ge/le 而非 Literal，
+    # 保证 query 字符串 "1" 能自动转成 int（与 CustomerQuery / EmployeeQuery 写法一致）
+    status: int | None = Field(default=None, ge=0, le=1)
 
 
 class GoodsImportErrorItem(BaseModel):

@@ -5,12 +5,18 @@
   //   运行方式是 cd backend && pytest（见 pyproject.toml 的 testpaths 与 CI 的 python -m pytest tests/），
   //   因此测试与业务代码一律 from app.xxx import ...，extraPaths 必须指向 "."。
   //
-  // 【为什么关掉 reportImplicitRelativeImport】
+  // 【为什么 tests 单独配一个执行环境（executionEnvironments）】
   //   仓库根没有 __init__.py，但 backend/app 与 backend/tests 都有，
-  //   Pyright 会把 backend 猜成命名空间包，从而把 tests 里的 from app.core... 
-  //   误判为「隐式相对导入」，并建议改成 from ..app.core...；
-  //   而 pytest 下 from ..app 会直接抛 attempted relative import beyond top-level package。
-  //   这是工具误报，不是代码问题，故仅关闭该条规则，其余类型检查全部保留。
+  //   若只给全局 extraPaths，Pyright/basedpyright 可能把 backend 猜成命名空间包，
+  //   从而把 tests 里的 from app.core... 误判为「隐式相对导入」，
+  //   并建议改成 from ..app.core...（pytest 下会抛 attempted relative import beyond top-level package）
+  //   或建议改成 backend.tests.app.core...（更离谱，直接不存在）。
+  //   解法：按「执行根目录」声明导入根，root=tests 时 tests 与 app 属同一顶层包，from app.xxx 即绝对导入。
+  //   路径一律相对本配置文件书写，换机器/换盘符都不用改（不写死绝对的 backend 路径）。
+  "executionEnvironments": [
+    { "root": ".", "extraPaths": ["."] },
+    { "root": "tests", "extraPaths": [".."] }
+  ],
   "include": ["app", "tests"],
   "exclude": [".venv", ".venv311", "alembic/versions", "**/__pycache__", "reports"],
   "extraPaths": ["."],

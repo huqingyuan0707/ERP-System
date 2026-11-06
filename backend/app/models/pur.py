@@ -124,12 +124,14 @@ class PurOrder(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantM
       - status：0 草稿/1 待审/2 已审/3 部分入库/4 完成/5 关闭
       - total_amount：含税合计，等于各行明细 amount 之和，不再二次四舍五入
       - tax_amount：税额，按含税口径 Σ(amount - amount/(1+tax_rate)) 汇总
+      - source_apply_id：来源采购申请单（P-02 转单溯源），手工建单为空
     """
 
     __tablename__ = "pur_order"
     __table_args__ = (
         Index("uq_pur_order_no", "order_no", unique=True),  # 订单号全库唯一，不复用
         Index("idx_pur_order_supplier", "supplier_id"),  # 供应商是列表筛选与应付追溯的高频条件
+        Index("idx_pur_order_source_apply", "source_apply_id"),  # 按来源申请单反查订单
         CheckConstraint("total_amount >= 0", name="ck_pur_order_total_nonnegative"),  # 金额非负
         CheckConstraint("tax_amount >= 0", name="ck_pur_order_tax_nonnegative"),  # 税额非负
     )
@@ -148,6 +150,10 @@ class PurOrder(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantM
     audit_at: Mapped[date | None] = mapped_column(Date)  # 审核时间
     audit_remark: Mapped[str | None] = mapped_column(String(255))  # 驳回原因
     remark: Mapped[str | None] = mapped_column(String(255))  # 备注
+    # 来源采购申请单：手工建单为空；仅作溯源引用，不参与任何业务校验与状态流转
+    source_apply_id: Mapped[int | None] = mapped_column(
+        BIGINT_PK, ForeignKey("pur_apply.id"), nullable=True
+    )
 
 
 # 采购订单明细表：pur_order_item，inbound_qty 由入库确认事务累加，用于回写订单状态
@@ -162,11 +168,13 @@ class PurOrderItem(*_ITEM_MIXINS, Base):
       - amount：行金额 = round(qty × price, 2)，由 Service 重算，不允许前端直传
       - tax_rate：税率，0～1（0.13 表示 13%）
       - inbound_qty：累计已入库数量，默认 0，入库确认时累加（部分入库与完成判定依据）
+      - apply_item_id：来源申请明细行（P-02 行级溯源），手工建单为空
     """
 
     __tablename__ = "pur_order_item"
     __table_args__ = (
         Index("idx_pur_order_item_order", "order_id"),  # 按订单查明细的高频索引
+        Index("idx_pur_order_item_apply_item", "apply_item_id"),  # 按来源申请明细反查订单行
         CheckConstraint("qty > 0", name="ck_pur_order_item_qty_positive"),  # 订购数量必须为正
         CheckConstraint("price >= 0", name="ck_pur_order_item_price_nonnegative"),  # 单价非负
         # 税率取值 0～1，0.13 表示 13%
@@ -179,6 +187,10 @@ class PurOrderItem(*_ITEM_MIXINS, Base):
     order_id: Mapped[int] = mapped_column(
         BIGINT_PK, ForeignKey("pur_order.id", ondelete="CASCADE"), nullable=False
     )  # 所属订单，级联删除
+    # 来源申请明细：手工建单为空；仅作溯源引用，不参与任何业务校验
+    apply_item_id: Mapped[int | None] = mapped_column(
+        BIGINT_PK, ForeignKey("pur_apply_item.id"), nullable=True
+    )
     # 商品
     goods_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False)
     # 单位

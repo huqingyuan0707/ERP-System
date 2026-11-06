@@ -217,6 +217,7 @@ class AuthService:
             username=user.username,
             real_name=user.real_name,
             tenant_id=user.tenant_id,
+            dept_id=user.dept_id,  # 供前端新建单据时预填申请部门
             roles=roles,
             permissions=permissions,
             menus=menus,

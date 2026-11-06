@@ -15,6 +15,8 @@ from app.api.v1.endpoints import (
     goods,
     inventory,
     log,
+    purchase_apply,
+    purchase_order,
     supplier,
     system,
     task,
@@ -95,3 +97,7 @@ api_router.include_router(customer.router)
 # B-06：/base/depts/sort、/base/employees/options 等静态路径均在各自模块内先于 /{id} 注册
 api_router.include_router(dept.router)
 api_router.include_router(employee.router)
+# P-01：采购申请 /purchase/applies；列表与新增为静态路径，先于 /{apply_id} 注册
+api_router.include_router(purchase_apply.router)
+# P-02：采购订单 /purchase/orders；/orders/from-apply/{apply_id} 为静态段，先于 /orders/{order_id}
+api_router.include_router(purchase_order.router)

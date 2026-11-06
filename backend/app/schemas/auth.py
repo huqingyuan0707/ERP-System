@@ -72,6 +72,8 @@ class CurrentUserOut(BaseModel):
     username: str
     real_name: str | None = None
     tenant_id: int | None = None
+    # 所属部门：前端新建单据时用于「部门默认当前用户」的预填（P-01 采购申请）
+    dept_id: int | None = None
     roles: list[str] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
     menus: list[MenuOut] = Field(default_factory=list)

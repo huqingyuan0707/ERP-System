@@ -5,6 +5,11 @@
 停用员工后新单据不可选、操作日志完整、按钮权限 403。
 """
 
+# pyright: reportImplicitRelativeImport=false
+# backend/ 才是导入根（cd backend && pytest），app 是顶层包；IDE 内的 basedpyright
+# 未加载 backend/pyrightconfig.json 时会把 from app.xxx 误判为隐式相对导入。
+# 仅在本文件关闭这条误报规则，保持绝对导入写法，避免改成相对导入后 pytest 启动失败。
+
 import asyncio
 import uuid
 from collections.abc import AsyncIterator, Coroutine
@@ -309,9 +314,7 @@ async def _permission_scenario() -> None:
     role_id = 0
     user_id = 0
     async with AsyncSessionLocal() as session:
-        role = SysRole(
-            code=role_code, name="B06权限测试角色", data_scope=1, status=1, tenant_id=1
-        )
+        role = SysRole(code=role_code, name="B06权限测试角色", data_scope=1, status=1, tenant_id=1)
         session.add(role)
         await session.flush()
         role_id = int(role.id)
