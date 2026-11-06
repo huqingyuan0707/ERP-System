@@ -17,6 +17,7 @@ from app.schemas.employee import (
 from app.services.employee import EmployeeService
 from app.services.idempotency import IdempotencyService
 
+
 router = APIRouter(prefix="/base", tags=["基础资料-员工"])
 
 LIST_PERM = "base:employee:list"

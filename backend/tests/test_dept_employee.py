@@ -21,6 +21,7 @@ from app.main import app
 from app.models.base_data import BdEmployee
 from app.models.sys import SysDept, SysOperLog, SysRole, SysRolePermission, SysUser, SysUserRole
 
+
 API = "/api/v1"
 ADMIN = ("admin", "admin123")
 PASSWORD = "Passw0rd123"
@@ -118,7 +119,8 @@ async def _scenario() -> None:
             assert resp.status_code == 200, resp.text
             assert resp.json()["data"]["leader"] == "测试负责人"
             resp = await client.get(f"{API}/base/depts", headers=headers)
-            assert [item["id"] for item in resp.json()["data"] if item["id"] in (dept_a, dept_b)] == [
+            ids = [item["id"] for item in resp.json()["data"] if item["id"] in (dept_a, dept_b)]
+            assert ids == [
                 dept_b,
                 dept_a,
             ]
@@ -130,7 +132,8 @@ async def _scenario() -> None:
             )
             assert resp.status_code == 200, resp.text
             resp = await client.get(f"{API}/base/depts", headers=headers)
-            assert [item["id"] for item in resp.json()["data"] if item["id"] in (dept_a, dept_b)] == [
+            ids = [item["id"] for item in resp.json()["data"] if item["id"] in (dept_a, dept_b)]
+            assert ids == [
                 dept_a,
                 dept_b,
             ]
@@ -340,7 +343,9 @@ async def _permission_scenario() -> None:
         async with AsyncSessionLocal() as session:
             await session.execute(delete(SysUserRole).where(SysUserRole.user_id == user_id))
             await session.execute(delete(SysUser).where(SysUser.id == user_id))
-            await session.execute(delete(SysRolePermission).where(SysRolePermission.role_id == role_id))
+            await session.execute(
+                delete(SysRolePermission).where(SysRolePermission.role_id == role_id)
+            )
             await session.execute(delete(SysRole).where(SysRole.id == role_id))
             await session.commit()
 

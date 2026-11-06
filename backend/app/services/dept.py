@@ -14,6 +14,7 @@ from app.repositories.dept import DeptRepository
 from app.schemas.dept import DeptCreate, DeptOut, DeptSortPayload, DeptUpdate
 from app.services.audit import write_oper_log
 
+
 OPER_MODULE = "基础资料"
 
 

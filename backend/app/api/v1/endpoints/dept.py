@@ -11,6 +11,7 @@ from app.schemas.dept import DeptCreate, DeptOut, DeptSortPayload, DeptUpdate
 from app.services.dept import DeptService
 from app.services.idempotency import IdempotencyService
 
+
 router = APIRouter(prefix="/base", tags=["基础资料-部门"])
 
 

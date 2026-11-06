@@ -28,6 +28,7 @@ from app.services.audit import write_oper_log
 from app.utils.code_gen import format_code, next_seq_from_code
 from app.utils.pagination import paginate_result
 
+
 EMPLOYEE_CODE_PREFIX = "EMP"
 OPER_MODULE = "基础资料"
 
