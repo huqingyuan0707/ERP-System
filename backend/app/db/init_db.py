@@ -212,6 +212,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     warehouse_menu = next(menu for menu in menus if menu.perm_code == "base:warehouse:list")
     supplier_menu = next(menu for menu in menus if menu.perm_code == "base:supplier:list")
     customer_menu = next(menu for menu in menus if menu.perm_code == "base:customer:list")
+    employee_menu = next(menu for menu in menus if menu.perm_code == "base:employee:list")
     stock_menu = next(menu for menu in menus if menu.perm_code == "inv:stock:list")
     statement_menu = next(menu for menu in menus if menu.perm_code == "fin:statement:list")
     report_menu = next(menu for menu in menus if menu.perm_code == "rpt:finance:list")
@@ -241,6 +242,13 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("新增客户", "base:customer:add", customer_menu.id, 1),
         _button("修改客户", "base:customer:edit", customer_menu.id, 2),
         _button("删除客户", "base:customer:delete", customer_menu.id, 3),
+        _button("部门查看", "base:dept:list", employee_menu.id, 8),
+        _button("新增部门", "base:dept:add", employee_menu.id, 9),
+        _button("修改部门", "base:dept:edit", employee_menu.id, 10),
+        _button("删除部门", "base:dept:delete", employee_menu.id, 11),
+        _button("新增员工", "base:employee:add", employee_menu.id, 1),
+        _button("修改员工", "base:employee:edit", employee_menu.id, 2),
+        _button("删除员工", "base:employee:delete", employee_menu.id, 3),
         _button("导出库存", "inv:stock:export", stock_menu.id, 6),
         _button("导出通用报表", "report:export", report_menu.id, 5),
         _button("导出对账单", "fin:statement:export", statement_menu.id, 7),
@@ -610,4 +618,48 @@ async def _ensure_permissions(session: AsyncSession) -> None:
             for permission in export_permissions:
                 if (role_id, permission.id) not in existing_grants:
                     session.add(SysRolePermission(role_id=role_id, permission_id=permission.id))
+    await session.flush()
+
+    # B-06 员工/部门按钮权限：已初始化的数据库补齐，并授权给每个租户的 admin
+    employee_menu_id = await session.scalar(
+        select(SysPermission.id).where(SysPermission.perm_code == "base:employee:list")
+    )
+    b06_specs = (
+        ("部门查看", "base:dept:list", 8),
+        ("新增部门", "base:dept:add", 9),
+        ("修改部门", "base:dept:edit", 10),
+        ("删除部门", "base:dept:delete", 11),
+        ("新增员工", "base:employee:add", 1),
+        ("修改员工", "base:employee:edit", 2),
+        ("删除员工", "base:employee:delete", 3),
+    )
+    b06_permissions: list[SysPermission] = []
+    for name, perm_code, sort in b06_specs:
+        permission = await session.scalar(
+            select(SysPermission).where(SysPermission.perm_code == perm_code)
+        )
+        if permission is None:
+            permission = SysPermission(
+                name=name,
+                type=3,
+                perm_code=perm_code,
+                parent_id=employee_menu_id,
+                sort=sort,
+            )
+            session.add(permission)
+            await session.flush()
+        b06_permissions.append(permission)
+
+    for admin_role in admin_roles:
+        for permission in b06_permissions:
+            granted = await session.scalar(
+                select(SysRolePermission.role_id).where(
+                    SysRolePermission.role_id == admin_role.id,
+                    SysRolePermission.permission_id == permission.id,
+                )
+            )
+            if granted is None:
+                session.add(
+                    SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
+                )
     await session.flush()

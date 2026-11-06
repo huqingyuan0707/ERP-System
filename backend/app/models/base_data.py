@@ -1,8 +1,9 @@
 """基础资料模型（表名前缀 bd_）。"""
 
+from datetime import date
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, Numeric, String, text
+from sqlalchemy import Boolean, Date, ForeignKey, Index, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -150,4 +151,28 @@ class BdCustomer(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Tenan
     credit_limit: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
     credit_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    remark: Mapped[str | None] = mapped_column(String(255))
+
+
+class BdEmployee(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantMixin, Base):
+    """员工（B-06）：字段严格按《数据库表设计.md》5.7 节定义。"""
+
+    __tablename__ = "bd_employee"
+    __table_args__ = (
+        # 同一租户下员工编码唯一（软删记录仍占用编码，与唯一索引一致）
+        Index("uq_employee_code_tenant", "code", "tenant_id", unique=True),
+        # 一个系统账号最多关联一个员工；NULL 不参与唯一性比较
+        Index("uq_employee_user_tenant", "user_id", "tenant_id", unique=True),
+        Index("idx_employee_dept", "dept_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    dept_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("sys_dept.id"), nullable=False)
+    position: Mapped[str | None] = mapped_column(String(64))
+    mobile: Mapped[str | None] = mapped_column(String(32))
+    entry_date: Mapped[date | None] = mapped_column(Date)
+    status: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    user_id: Mapped[int | None] = mapped_column(BIGINT_PK, ForeignKey("sys_user.id"))
     remark: Mapped[str | None] = mapped_column(String(255))
