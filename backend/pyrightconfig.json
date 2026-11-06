@@ -1,0 +1,20 @@
+{
+  // Pyright 配置：随仓库共享，保证团队内 IDE 与 CLI 的静态分析口径一致。
+  //
+  // 【导入根】backend/ 才是本项目的导入根：
+  //   运行方式是 cd backend && pytest（见 pyproject.toml 的 testpaths 与 CI 的 python -m pytest tests/），
+  //   因此测试与业务代码一律 from app.xxx import ...，extraPaths 必须指向 "."。
+  //
+  // 【为什么关掉 reportImplicitRelativeImport】
+  //   仓库根没有 __init__.py，但 backend/app 与 backend/tests 都有，
+  //   Pyright 会把 backend 猜成命名空间包，从而把 tests 里的 from app.core... 
+  //   误判为「隐式相对导入」，并建议改成 from ..app.core...；
+  //   而 pytest 下 from ..app 会直接抛 attempted relative import beyond top-level package。
+  //   这是工具误报，不是代码问题，故仅关闭该条规则，其余类型检查全部保留。
+  "include": ["app", "tests"],
+  "exclude": [".venv", ".venv311", "alembic/versions", "**/__pycache__", "reports"],
+  "extraPaths": ["."],
+  "pythonVersion": "3.11",
+  "typeCheckingMode": "basic",
+  "reportImplicitRelativeImport": "none"
+}
