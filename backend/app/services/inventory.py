@@ -1,17 +1,36 @@
-"""库存写入统一服务：租户引用、状态、数量精度、库存与流水同事务。"""
+"""库存统一服务：写入（锁定/释放/变更）+ 只读查询（库存/流水/汇总）。
+
+写路径的核心约束：
+  - 所有库存增减必须经过本服务，同事务写 inv_stock 与 inv_stock_flow；
+  - inv_stock 行使用 SELECT ... FOR UPDATE 行锁，负库存一律禁止；
+  - 入库（direction=1）时按移动加权平均重算 avg_cost，出库直接结转出库前均价。
+
+读路径仅做参数业务校验 + 组装，SQL 全部在 InventoryRepository 内完成，
+一次 join 取回关联档案，避免 N+1。
+"""
 
 from decimal import Decimal
 
+from sqlalchemy import select
+
 from app.core.exceptions import AppException, ErrorCode
+from app.models.base_data import BdGoods, BdWarehouse
 from app.repositories.inventory import InventoryRepository
+from app.schemas.common import PageResult
 from app.schemas.inventory import (
     ChangeStockIn,
     ChangeStockOut,
+    FlowListItem,
+    FlowQuery,
     LockStockIn,
+    StockListItem,
     StockOut,
+    StockQuery,
+    StockSummary,
     UnlockStockIn,
 )
 from app.utils.numbers import validate_quantity
+from app.utils.pagination import paginate_result
 
 
 class InventoryService:
@@ -144,3 +163,62 @@ class InventoryService:
             if commit:
                 await self._db.rollback()
             raise
+
+    # ---------- 只读查询 ----------
+
+    async def list_stocks(self, query: StockQuery) -> PageResult[StockListItem]:
+        """库存列表（分页）。
+
+        口径说明：
+          - 只返回 inv_stock 中真实存在的行；从未发生过库存变动的“仓库+商品”组合不会出现
+            （库存行由首次入库时惰性创建，这是既有设计，不在此改造）；
+          - 已软删的商品、仓库、库存行都不会出现在结果中。
+        """
+        await self._validate_stock_filter(query)
+        rows, total = await self._repo.list_stocks(query)
+        items = [StockListItem.model_validate(dict(row._mapping)) for row in rows]
+        return paginate_result(items, total, query.page, query.page_size)
+
+    async def stock_summary(self, query: StockQuery) -> StockSummary:
+        """库存汇总：与列表共用同一套过滤条件，保证底部合计与列表一致。"""
+        await self._validate_stock_filter(query)
+        return StockSummary.model_validate(await self._repo.stock_summary(query))
+
+    async def list_flows(self, query: FlowQuery) -> PageResult[FlowListItem]:
+        """库存流水列表（分页，只增不删的留痕数据）。"""
+        rows, total = await self._repo.list_flows(query)
+        items = [FlowListItem.model_validate(dict(row._mapping)) for row in rows]
+        return paginate_result(items, total, query.page, query.page_size)
+
+    async def _validate_stock_filter(self, query: StockQuery) -> None:
+        """库存查询的档案校验：传了仓库/商品 ID 就必须在当前租户内存在且未删除。
+
+        作用：把“查了一个不存在的仓库”从“静默返回空列表”变成明确的 422，
+        避免前端把越权或错误 ID 误判为“该仓库没有库存”。
+
+        风险点：这里**必须用不加锁的查询**。若复用 get_warehouse_for_update /
+        get_goods_for_update（带 SELECT ... FOR UPDATE），一次普通列表查询就会持有
+        档案行锁直到连接归还，可能阻塞入库/出库等写事务，属于严重的锁竞争问题。
+        """
+        if query.warehouse_id is not None:
+            exists = await self._db.scalar(
+                select(BdWarehouse.id).where(
+                    BdWarehouse.id == query.warehouse_id,
+                    BdWarehouse.tenant_id == self.tenant_id,
+                    BdWarehouse.is_deleted.is_(False),
+                )
+            )
+            if exists is None:
+                raise AppException(ErrorCode.VALIDATION_ERROR, "仓库不存在或不可访问")
+        if query.goods_id is not None:
+            exists = await self._db.scalar(
+                select(BdGoods.id).where(
+                    BdGoods.id == query.goods_id,
+                    BdGoods.tenant_id == self.tenant_id,
+                    BdGoods.is_deleted.is_(False),
+                )
+            )
+            if exists is None:
+                raise AppException(ErrorCode.VALIDATION_ERROR, "商品不存在或不可访问")
+
+
