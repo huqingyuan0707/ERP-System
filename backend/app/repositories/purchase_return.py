@@ -150,6 +150,38 @@ class PurReturnRepository(BaseRepository[PurReturn]):
         rows = (await self.db.execute(stmt)).all()
         return {int(row[0]): Decimal(str(row[1])) for row in rows}
 
+    async def sum_returned_amounts(self, source_nos: set[str]) -> dict[str, Decimal]:
+        """按原入库单号汇总已确认退货的冲减金额（Σ 主表 total_amount，G1 冲减口径）。
+
+        只统计 status=1 且未软删的退货单；用于入库详情展示「本单已被退货冲减多少」。
+        """
+        if not source_nos:
+            return {}
+        stmt = (
+            select(PurReturn.source_no, func.coalesce(func.sum(PurReturn.total_amount), 0))
+            .where(
+                PurReturn.source_no.in_(source_nos),
+                PurReturn.status == 1,
+                PurReturn.is_deleted.is_(False),
+            )
+            .group_by(PurReturn.source_no)
+        )
+        if self.tenant_id is not None:
+            stmt = stmt.where(PurReturn.tenant_id == self.tenant_id)
+        rows = (await self.db.execute(stmt)).all()
+        return {str(row[0]): Decimal(str(row[1])) for row in rows}
+
+    async def map_source_inbound_ids(self, source_nos: set[str]) -> dict[str, int]:
+        """按原入库单号解析入库单 ID（不做软删过滤，纯 ID 解析供前端跳转）。"""
+        if not source_nos:
+            return {}
+        stmt = select(PurInbound.inbound_no, PurInbound.id).where(
+            PurInbound.inbound_no.in_(source_nos),
+            PurInbound.tenant_id == self.tenant_id,
+        )
+        rows = (await self.db.execute(stmt)).all()
+        return {str(row[0]): int(row[1]) for row in rows}
+
     def build_query(self, query: PurReturnQuery) -> Select:
         """组合状态/供应商/仓库/原单号/日期区间/关键字筛选；租户过滤由分页方法追加。"""
         stmt = select(PurReturn).where(PurReturn.is_deleted.is_(False))

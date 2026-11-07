@@ -49,6 +49,8 @@ export interface PurReturn {
   warehouseId: number
   warehouseName: string | null
   sourceNo: string
+  /** 原入库单 ID：用于跳转到入库单详情（查不到原单时为 null） */
+  sourceInboundId: number | null
   returnDate: string
   status: number
   totalAmount: DecimalValue

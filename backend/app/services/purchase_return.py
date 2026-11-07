@@ -728,6 +728,10 @@ class PurchaseReturnService:
                     )
 
         result: list[PurReturnOut] = []
+        # 原入库单 ID 解析：供前端从退货单直接跳转到入库单详情（列表/详情都带）
+        source_inbound_ids = await self._repo.map_source_inbound_ids(
+            {str(row.source_no) for row in rows}
+        )
         for row in rows:
             row_items = items_map.get(int(row.id), [])
             active_items = [item for item in row_items if not item.is_deleted]
@@ -742,6 +746,7 @@ class PurchaseReturnService:
                     update={
                         "supplier_name": supplier_names.get(row.supplier_id),
                         "warehouse_name": warehouse_names.get(row.warehouse_id),
+                        "source_inbound_id": source_inbound_ids.get(str(row.source_no)),
                         "items_count": len(active_items),
                         "items": item_outs,
                     }

@@ -38,6 +38,10 @@ export interface PurInboundItem {
   amount: DecimalValue
   taxRate: DecimalValue
   batchNo: string | null
+  /** 已退数量（已确认退货，按本单号 + 商品），详情接口返回 */
+  returnedQty: DecimalValue
+  /** 可退数量 = 本单入库 - 已退 */
+  returnableQty: DecimalValue
 }
 
 /** 采购入库单（对应后端 PurInboundOut）。 */
@@ -54,6 +58,8 @@ export interface PurInbound {
   status: number
   totalAmount: DecimalValue
   taxAmount: DecimalValue
+  /** 累计已冲减金额 = Σ 已确认退货单金额（详情接口返回） */
+  returnedAmount: DecimalValue
   remark: string | null
   version: number
   itemsCount: number

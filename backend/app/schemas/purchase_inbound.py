@@ -85,7 +85,11 @@ class PurInboundUpdate(BaseModel):
 
 
 class PurInboundItemOut(BaseModel):
-    """入库明细出参；单价/金额取来源订单明细，由 Service 批量补齐商品与单位名称。"""
+    """入库明细出参；单价/金额取来源订单明细，由 Service 批量补齐商品与单位名称。
+
+    returned_qty / returnable_qty 仅详情接口填充（按「本入库单号 + 商品」汇总已确认
+    退货），用于入库详情页展示退货闭环：可退 = 本单入库 - 已退。
+    """
 
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
 
@@ -101,6 +105,8 @@ class PurInboundItemOut(BaseModel):
     amount: Decimal = Decimal("0")  # 行金额，Service 重算
     tax_rate: Decimal = Decimal("0")  # 税率
     batch_no: str | None = None  # 批次号
+    returned_qty: Decimal = Decimal("0")  # 已退数量（已确认退货，按本单号 + 商品）
+    returnable_qty: Decimal = Decimal("0")  # 可退数量 = 本单入库 - 已退
 
 
 class PurInboundOut(BaseModel):
@@ -120,6 +126,9 @@ class PurInboundOut(BaseModel):
     status: int = PurInboundStatus.DRAFT
     total_amount: Decimal = Decimal("0")  # 含税合计，确认时按此生成应付
     tax_amount: Decimal = Decimal("0")  # 其中税额
+    # 累计已冲减金额 = Σ 已确认退货单 total_amount（按本入库单号），详情接口填充；
+    # 应付当前余额 = total_amount - returned_amount（未付口径另见 fin_payable）
+    returned_amount: Decimal = Decimal("0")
     remark: str | None = None  # 备注
     version: int = 1  # 乐观锁版本号
     items_count: int = 0  # 明细行数

@@ -9,6 +9,7 @@
  *   - 退货金额 ≤ 原应付当前余额；金额以后端重算结果为准。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 
 import { getSupplierOptions } from '@/api/supplier'
@@ -394,7 +395,38 @@ const handlePrint = (): void => {
   window.print()
 }
 
-onMounted(() => {
+// ---------- 跨页面联动（数据闭环） ----------
+
+const route = useRoute()
+const router = useRouter()
+
+/** 跳转到原入库单详情（入库页自动打开详情抽屉）。 */
+const goSourceInbound = (row: { sourceInboundId: number | null; sourceNo: string }): void => {
+  void router.push(
+    row.sourceInboundId
+      ? { path: '/purchase/inbound', query: { focusId: String(row.sourceInboundId) } }
+      : { path: '/purchase/inbound', query: { inboundNo: row.sourceNo } },
+  )
+}
+
+/**
+ * URL 参数联动：
+ *   - /purchase/return?sourceNo=PIxxx          → 列表按原单号筛选（从入库页「查看退货」跳来）
+ *   - /purchase/return?sourceNo=PIxxx&create=1 → 打开新建抽屉并自动查询原单（从入库页「去退货」跳来）
+ */
+const applyRouteQuery = async (): Promise<void> => {
+  const sourceNo = typeof route.query.sourceNo === 'string' ? route.query.sourceNo : ''
+  if (!sourceNo) return
+  query.sourceNo = sourceNo
+  if (route.query.create === '1') {
+    await openCreate()
+    form.sourceNo = sourceNo
+    await handleSourceLookup()
+  }
+}
+
+onMounted(async () => {
+  await applyRouteQuery()
   void Promise.all([fetchList(), fetchSupplierOptions(), fetchWarehouseOptions()])
 })
 </script>
@@ -488,7 +520,13 @@ onMounted(() => {
         >
           <el-table :data="rows" border stripe>
             <el-table-column prop="returnNo" label="退货单号" width="180" />
-            <el-table-column prop="sourceNo" label="原入库单号" width="180" />
+            <el-table-column label="原入库单号" width="180">
+              <template #default="{ row }">
+                <el-link type="primary" @click="goSourceInbound(row)">
+                  {{ row.sourceNo }}
+                </el-link>
+              </template>
+            </el-table-column>
             <el-table-column label="供应商" min-width="140">
               <template #default="{ row }">{{ row.supplierName || '-' }}</template>
             </el-table-column>
@@ -709,7 +747,11 @@ onMounted(() => {
           <h2 class="print-title">采购退货单</h2>
           <el-descriptions :column="3" border size="small">
             <el-descriptions-item label="退货单号">{{ detail.returnNo }}</el-descriptions-item>
-            <el-descriptions-item label="原入库单号">{{ detail.sourceNo }}</el-descriptions-item>
+            <el-descriptions-item label="原入库单号">
+              <el-link type="primary" @click="goSourceInbound(detail)">
+                {{ detail.sourceNo }}
+              </el-link>
+            </el-descriptions-item>
             <el-descriptions-item label="供应商">{{ detail.supplierName || '-' }}</el-descriptions-item>
             <el-descriptions-item label="退货仓库">{{ detail.warehouseName || '-' }}</el-descriptions-item>
             <el-descriptions-item label="退货日期">{{ detail.returnDate || '-' }}</el-descriptions-item>

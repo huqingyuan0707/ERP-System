@@ -381,6 +381,17 @@ async def _basic_return_scenario(goods_id: int, supplier_id: int) -> None:
             assert Decimal(str(resp.json()["data"]["items"][0]["returnedQty"])) == Decimal("10")
             assert Decimal(str(resp.json()["data"]["items"][0]["returnableQty"])) == Decimal("90")
 
+            # 数据闭环：入库详情带出已退/可退数量与累计冲减金额；退货单可反查原单 ID
+            resp = await client.get(f"{API}/purchase/inbounds/{inbound_id}", headers=headers)
+            assert resp.status_code == 200, resp.text
+            inbound_detail = resp.json()["data"]
+            assert Decimal(str(inbound_detail["returnedAmount"])) == Decimal("100.00")
+            assert Decimal(str(inbound_detail["items"][0]["returnedQty"])) == Decimal("10")
+            assert Decimal(str(inbound_detail["items"][0]["returnableQty"])) == Decimal("90")
+            resp = await client.get(f"{API}/purchase/returns/{return_id}", headers=headers)
+            assert resp.status_code == 200, resp.text
+            assert int(resp.json()["data"]["sourceInboundId"]) == inbound_id
+
             # 重复确认：409 且库存/应付不变
             before = await _snapshot()
             resp = await client.post(f"{API}/purchase/returns/{return_id}/confirm", headers=headers)
@@ -407,6 +418,14 @@ async def _basic_return_scenario(goods_id: int, supplier_id: int) -> None:
                 payable = await _get_payable(inbound_no)
                 assert Decimal(str(payable.amount)) == Decimal("650.00")
                 assert Decimal(str(payable.unpaid_amount)) == Decimal("650.00")
+
+            # 退货后入库详情闭环数字同步更新：累计冲减 100 + 250 = 350，可退 85
+            resp = await client.get(f"{API}/purchase/inbounds/{inbound_id}", headers=headers)
+            assert resp.status_code == 200, resp.text
+            inbound_detail = resp.json()["data"]
+            assert Decimal(str(inbound_detail["returnedAmount"])) == Decimal("350.00")
+            assert Decimal(str(inbound_detail["items"][0]["returnedQty"])) == Decimal("15")
+            assert Decimal(str(inbound_detail["items"][0]["returnableQty"])) == Decimal("85")
 
             # 操作日志
             async with AsyncSessionLocal() as session:

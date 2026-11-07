@@ -30,6 +30,7 @@ from app.models.finance import FinPayable
 from app.models.pur import PurInbound, PurInboundItem, PurOrder, PurOrderItem
 from app.models.sys import SysUser
 from app.repositories.purchase_inbound import PurInboundRepository
+from app.repositories.purchase_return import PurReturnRepository
 from app.schemas.common import PageResult
 from app.schemas.inventory import ChangeStockIn
 from app.schemas.purchase_inbound import (
@@ -629,6 +630,9 @@ class PurchaseInboundService:
 
         goods_map: dict[int, BdGoods] = {}
         unit_names: dict[int, str] = {}
+        return_repo: PurReturnRepository | None = None
+        returned_qty_map: dict[int, dict[int, Decimal]] = {}
+        returned_amount_map: dict[str, Decimal] = {}
         if with_items:
             goods_ids = {
                 int(item.goods_id)
@@ -640,13 +644,26 @@ class PurchaseInboundService:
             unit_names = await self._load_unit_names(
                 {int(goods.unit_id) for goods in goods_map.values() if goods.unit_id}
             )
+            # 退货闭环展示：按「本入库单号 + 商品」汇总已确认退货数量与冲减金额
+            return_repo = PurReturnRepository(self._db, tenant_id=self._tenant_id)
+            source_nos = {str(row.inbound_no) for row in rows}
+            returned_amount_map = await return_repo.sum_returned_amounts(source_nos)
+            for row in rows:
+                returned_qty_map[int(row.id)] = await return_repo.sum_returned_qty(
+                    str(row.inbound_no)
+                )
 
         result: list[PurInboundOut] = []
         for row in rows:
             row_items = items_map.get(int(row.id), [])
             active_items = [item for item in row_items if not item.is_deleted]
             item_outs = (
-                self._build_item_outs(active_items, goods_map, unit_names)
+                self._build_item_outs(
+                    active_items,
+                    goods_map,
+                    unit_names,
+                    returned_qty_map.get(int(row.id), {}),
+                )
                 if with_items
                 else []
             )
@@ -658,6 +675,11 @@ class PurchaseInboundService:
                         "order_no": order_nos.get(row.order_id),
                         "items_count": len(active_items),
                         "items": item_outs,
+                        "returned_amount": (
+                            returned_amount_map.get(str(row.inbound_no), ZERO)
+                            if with_items
+                            else Decimal("0")
+                        ),
                     }
                 )
             )
@@ -668,14 +690,28 @@ class PurchaseInboundService:
         items: list[PurInboundItem],
         goods_map: dict[int, BdGoods],
         unit_names: dict[int, str],
+        returned_qty: dict[int, Decimal],
     ) -> list[PurInboundItemOut]:
-        """把明细行转换成出参；商品与单位名称由外部批量加载。"""
+        """把明细行转换成出参；商品/单位名称与退货闭环数量由外部批量加载。
+
+        可退数量按「本单该商品入库合计 - 已退」计算（同一商品多行时逐行展示同一可退量，
+        前端以合计口径展示；退货单确认校验同样按商品聚合，口径一致）。
+        """
+        original_by_goods: dict[int, Decimal] = {}
+        for item in items:
+            goods_id = int(item.goods_id)
+            original_by_goods[goods_id] = (
+                original_by_goods.get(goods_id, ZERO) + Decimal(str(item.qty))
+            )
         result: list[PurInboundItemOut] = []
         for item in items:
             goods = goods_map.get(int(item.goods_id))
             unit_name = (
                 unit_names.get(int(goods.unit_id)) if goods is not None and goods.unit_id else None
             )
+            goods_id = int(item.goods_id)
+            returned = returned_qty.get(goods_id, ZERO)
+            returnable = original_by_goods.get(goods_id, ZERO) - returned
             result.append(
                 PurInboundItemOut(
                     id=item.id,
@@ -690,6 +726,8 @@ class PurchaseInboundService:
                     amount=item.amount,
                     tax_rate=item.tax_rate,
                     batch_no=item.batch_no,
+                    returned_qty=returned,
+                    returnable_qty=returnable,
                 )
             )
         return result

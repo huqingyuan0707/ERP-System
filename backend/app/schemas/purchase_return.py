@@ -121,6 +121,8 @@ class PurReturnOut(BaseModel):
     warehouse_id: int
     warehouse_name: str | None = None  # 退货出库仓库名称
     source_no: str  # 原入库单号
+    # 原入库单 ID：供前端从退货单直接跳转到入库单详情（查不到原单时为 null）
+    source_inbound_id: int | None = None
     return_date: date
     status: int = PurReturnStatus.DRAFT
     total_amount: Decimal = Decimal("0")  # 退货总金额，确认时按此冲减原应付

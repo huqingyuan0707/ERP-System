@@ -8,6 +8,7 @@
  *   - 确认前提示「将增加库存并生成应付」；金额以后端重算结果为准。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 
 import { getSupplierOptions } from '@/api/supplier'
@@ -21,6 +22,7 @@ import {
   updatePurInbound,
 } from '@/api/purchaseInbound'
 import { getPurOrderList } from '@/api/purchaseOrder'
+import { getPurReturnList } from '@/api/purchaseReturn'
 import { getWarehouseList } from '@/api/warehouse'
 import BaseCard from '@/components/BaseCard.vue'
 import type { Supplier } from '@/types/supplier'
@@ -35,6 +37,7 @@ import {
   type PurInboundItemPayload,
   type PurInboundQuery,
 } from '@/types/purchaseInbound'
+import { RETURN_STATUS_LABEL, type PurReturn } from '@/types/purchaseReturn'
 import { ORDER_STATUS, type PurOrder } from '@/types/purchaseOrder'
 
 // ---------- 通用格式化（前端只做展示，金额以后端重算结果为准） ----------
@@ -361,8 +364,13 @@ const openDetail = async (row: PurInbound): Promise<void> => {
   detailVisible.value = true
   detailLoading.value = true
   detail.value = null
+  relatedReturns.value = []
   try {
     detail.value = await getPurInboundDetail(row.id)
+    // 数据闭环：带出本单关联的退货记录（按原单号反查，含草稿与已确认）
+    relatedReturns.value = (
+      await getPurReturnList({ page: 1, pageSize: 50, sourceNo: detail.value.inboundNo })
+    ).items
   } finally {
     detailLoading.value = false
   }
@@ -373,7 +381,55 @@ const handlePrint = (): void => {
   window.print()
 }
 
-onMounted(() => {
+// ---------- 跨页面联动（数据闭环） ----------
+
+const route = useRoute()
+const router = useRouter()
+
+/** 关联退货记录（入库详情抽屉内展示，按原单号反查）。 */
+const relatedReturns = ref<PurReturn[]>([])
+
+/** 跳转退货页：带原单号自动打开新建抽屉并查询可退数量。 */
+const goCreateReturn = (): void => {
+  if (!detail.value) return
+  void router.push({
+    path: '/purchase/return',
+    query: { sourceNo: detail.value.inboundNo, create: '1' },
+  })
+}
+
+const returnStatusLabel = (status: number): string => RETURN_STATUS_LABEL[status] ?? '未知'
+
+/** 可退数量是否已退完（置灰展示）。 */
+const isDepleted = (value: string | number | null | undefined): boolean => toNum(value) <= 0
+
+/**
+ * URL 参数联动：
+ *   - /purchase/inbound?focusId=123         → 自动打开该入库单详情（从退货页点原单号跳来）
+ *   - /purchase/inbound?inboundNo=PIxxx     → 列表按单号筛选
+ *   - /purchase/inbound?createOrderId=123   → 从订单页「去入库」跳来，直接打开新建并预填
+ */
+const applyRouteQuery = async (): Promise<void> => {
+  const focusId = Number(route.query.focusId)
+  const createOrderId = Number(route.query.createOrderId)
+  const inboundNo = typeof route.query.inboundNo === 'string' ? route.query.inboundNo : ''
+  if (Number.isFinite(focusId) && focusId > 0) {
+    await openDetail({ id: focusId } as PurInbound)
+    return
+  }
+  if (Number.isFinite(createOrderId) && createOrderId > 0) {
+    await openCreate()
+    form.orderId = createOrderId
+    await handleOrderChange(createOrderId)
+    return
+  }
+  if (inboundNo) {
+    query.keyword = inboundNo
+  }
+}
+
+onMounted(async () => {
+  await applyRouteQuery()
   void Promise.all([fetchList(), fetchSupplierOptions(), fetchWarehouseOptions()])
 })
 </script>
@@ -699,6 +755,10 @@ onMounted(() => {
             </el-descriptions-item>
             <el-descriptions-item label="含税金额">¥ {{ money(detail.totalAmount) }}</el-descriptions-item>
             <el-descriptions-item label="其中税额">¥ {{ money(detail.taxAmount) }}</el-descriptions-item>
+            <el-descriptions-item label="累计已冲减金额">
+              ¥ {{ money(detail.returnedAmount) }}
+              <span class="loop-hint">（应付余额 ¥ {{ money(toNum(detail.totalAmount) - toNum(detail.returnedAmount)) }}）</span>
+            </el-descriptions-item>
             <el-descriptions-item label="单据时间">
               {{ detail.createdAt?.replace('T', ' ').slice(0, 19) || '-' }}
             </el-descriptions-item>
@@ -731,7 +791,56 @@ onMounted(() => {
             <el-table-column label="批次号" width="110">
               <template #default="{ row }">{{ row.batchNo || '-' }}</template>
             </el-table-column>
+            <el-table-column label="已退数量" width="95" align="right">
+              <template #default="{ row }">{{ formatQty(row.returnedQty) }}</template>
+            </el-table-column>
+            <el-table-column label="可退数量" width="95" align="right">
+              <template #default="{ row }">
+                <span :class="{ 'loop-zero': isDepleted(row.returnableQty) }">
+                  {{ formatQty(row.returnableQty) }}
+                </span>
+              </template>
+            </el-table-column>
           </el-table>
+
+          <!-- 数据闭环：本入库单关联的退货记录（含草稿），可跳转退货页（不参与打印） -->
+          <div class="no-print">
+            <div class="related-title">
+              <span class="item-title">关联退货记录（{{ relatedReturns.length }}）</span>
+              <el-button
+                v-perm="'pur:return:add'"
+                link
+                type="primary"
+                :icon="'Plus'"
+                @click="goCreateReturn"
+              >
+                去退货
+              </el-button>
+            </div>
+            <el-table v-if="relatedReturns.length > 0" :data="relatedReturns" border size="small">
+              <el-table-column prop="returnNo" label="退货单号" width="180" />
+              <el-table-column label="退货日期" width="110" align="center">
+                <template #default="{ row }">{{ row.returnDate || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="退货金额" width="120" align="right">
+                <template #default="{ row }">¥ {{ money(row.totalAmount) }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="100" align="center">
+                <template #default="{ row }">
+                  <el-tag
+                    :type="Number(row.status) === 1 ? 'success' : 'info'"
+                    size="small"
+                  >
+                    {{ returnStatusLabel(Number(row.status)) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="备注" min-width="140">
+                <template #default="{ row }">{{ row.remark || '-' }}</template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-else description="本入库单暂无退货记录" :image-size="60" />
+          </div>
 
           <div class="print-totals">
             <span>金额合计（含税）：¥ {{ money(detail.totalAmount) }}</span>
@@ -785,6 +894,27 @@ onMounted(() => {
 .item-title {
   font-weight: 600;
   color: #303133;
+}
+
+/* 数据闭环展示 */
+.loop-hint {
+  font-size: 12px;
+  color: #909399;
+}
+
+.loop-zero {
+  color: #c0c4cc;
+}
+
+.related-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 0 8px;
+}
+
+.no-print {
+  margin-top: 4px;
 }
 
 .totals {
@@ -844,6 +974,10 @@ onMounted(() => {
   .print-area,
   .print-area * {
     visibility: visible;
+  }
+
+  .print-area .no-print {
+    display: none !important;
   }
 
   .print-area {

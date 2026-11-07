@@ -9,6 +9,7 @@
  *   - 订单本身不写库存与财务，入库进度来自 pur_order_item.inbound_qty 汇总。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 
 import { getSupplierOptions } from '@/api/supplier'
@@ -451,6 +452,13 @@ const openDetail = async (row: PurOrder): Promise<void> => {
   } finally {
     detailLoading.value = false
   }
+}
+
+/** 数据闭环：已审/部分入库的订单可直接跳转入库页新建入库单（自动预填该订单）。 */
+const router = useRouter()
+const goInbound = (): void => {
+  if (!detail.value) return
+  void router.push({ path: '/purchase/inbound', query: { createOrderId: String(detail.value.id) } })
 }
 
 /** 打印：只打印抽屉内的打印区（抬头 + 明细 + 合计 + 签字栏）。 */
@@ -936,6 +944,18 @@ onMounted(() => {
       </div>
 
       <template #footer>
+        <el-button
+          v-if="
+            detail &&
+            (detail.status === ORDER_STATUS.APPROVED || detail.status === ORDER_STATUS.PARTIAL_INBOUND)
+          "
+          v-perm="'pur:inbound:add'"
+          type="primary"
+          :icon="'Box'"
+          @click="goInbound"
+        >
+          去入库
+        </el-button>
         <el-button :icon="'Printer'" @click="handlePrint">打印</el-button>
         <el-button @click="detailVisible = false">关闭</el-button>
       </template>
