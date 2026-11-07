@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.security import hash_password
+from app.db.goods_seed import GOODS_SEED_TEMPLATE
 from app.db.session import AsyncSessionLocal, engine
 from app.models.base_data import BdGoods, BdGoodsCategory, BdUnit, BdWarehouse
 from app.models.sys import (
@@ -114,8 +115,10 @@ async def init_db() -> None:
 async def _seed(session: AsyncSession) -> None:
     exists = await session.scalar(select(func.count()).select_from(SysUser))
     if exists:
-        # 已有数据库不重复写入基础数据，只补齐后续新增的权限项，保证按钮权限可用
+        # 已有数据库不重复写入基础数据，只补齐后续新增的权限项与演示商品，
+        # 保证按钮权限可用、商品列表具备足够数据量
         await _ensure_permissions(session)
+        await _seed_extra_goods(session)
         await session.commit()
         return
 
@@ -220,6 +223,9 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     apply_menu = next(menu for menu in menus if menu.perm_code == "pur:apply:list")
     # P-02 采购订单：按钮权限挂在「采购订单」菜单下
     order_menu = next(menu for menu in menus if menu.perm_code == "pur:order:list")
+    # P-03 采购入库 / P-04 采购退货：按钮权限挂在各自菜单下
+    inbound_menu = next(menu for menu in menus if menu.perm_code == "pur:inbound:list")
+    return_menu = next(menu for menu in menus if menu.perm_code == "pur:return:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -270,6 +276,16 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("提交采购订单", "pur:order:submit", order_menu.id, 3),
         _button("审核采购订单", "pur:order:audit", order_menu.id, 4),
         _button("关闭采购订单", "pur:order:close", order_menu.id, 5),
+        # P-03 采购入库：新增/修改/确认/删除（查看权限复用菜单上的 pur:inbound:list）
+        _button("新增采购入库", "pur:inbound:add", inbound_menu.id, 1),
+        _button("修改采购入库", "pur:inbound:edit", inbound_menu.id, 2),
+        _button("确认采购入库", "pur:inbound:confirm", inbound_menu.id, 3),
+        _button("删除采购入库", "pur:inbound:delete", inbound_menu.id, 4),
+        # P-04 采购退货：新增/修改/确认/删除（查看权限复用菜单上的 pur:return:list）
+        _button("新增采购退货", "pur:return:add", return_menu.id, 1),
+        _button("修改采购退货", "pur:return:edit", return_menu.id, 2),
+        _button("确认采购退货", "pur:return:confirm", return_menu.id, 3),
+        _button("删除采购退货", "pur:return:delete", return_menu.id, 4),
         _button("超级权限", "*", dir_sys.id, 99),
     ]
     session.add_all(buttons)
@@ -437,6 +453,70 @@ async def _seed_base_data(session: AsyncSession) -> None:
         ]
     )
     await session.flush()
+
+
+async def _seed_extra_goods(session: AsyncSession) -> None:
+    """幂等补齐 88 条演示商品（GD0007~GD0094）。
+
+    设计说明：
+      - 仅在「已有库」分支调用（见 _seed），保证老库重启即可补齐，无需重建数据库；
+      - 按 code 判重，重复执行不会产生重复编码（uq_goods_code_tenant 兜底）；
+      - 分类/单位复用 _seed_base_data 中的「电子产品」「办公用品」与「个/台/箱」，
+        不新增基础资料，避免外键异常；
+      - status 全部为 1（启用），保证 GET /base/goods?status=1 能查到全部商品；
+      - 价格与库存上下限满足既有约束：sale_price > cost_price > 0，
+        stock_upper > stock_lower > 0；
+      - bd_goods 无供应商字段，商品不关联供应商（供应商仅挂在采购订单上）。
+    """
+    category_id_by_name = {
+        row.name: int(row.id)
+        for row in (await session.execute(select(BdGoodsCategory.id, BdGoodsCategory.name))).all()
+    }
+    unit_id_by_name = {
+        row.name: int(row.id)
+        for row in (await session.execute(select(BdUnit.id, BdUnit.name))).all()
+    }
+
+    # 判重：一次性取出本批编码，避免逐条查询（N+1）
+    target_codes = [f"GD{index:04d}" for index in range(7, 7 + len(GOODS_SEED_TEMPLATE))]
+    existing_codes = set(
+        (await session.execute(select(BdGoods.code).where(BdGoods.code.in_(target_codes))))
+        .scalars()
+        .all()
+    )
+
+    goods: list[BdGoods] = []
+    for offset, (name, spec, category_name, unit_name, cost, sale, lower, upper) in enumerate(
+        GOODS_SEED_TEMPLATE
+    ):
+        code = f"GD{offset + 7:04d}"
+        if code in existing_codes:
+            # 已存在则跳过，保证重复执行幂等
+            continue
+        category_id = category_id_by_name.get(category_name)
+        unit_id = unit_id_by_name.get(unit_name)
+        if category_id is None or unit_id is None:
+            # 缺基础资料时整批跳过，避免写入孤立外键
+            return
+        goods.append(
+            BdGoods(
+                code=code,
+                name=name,
+                spec=spec,
+                category_id=category_id,
+                unit_id=unit_id,
+                # 条码从既有种子最后一个 6901234567896 起递增，保证租户内唯一
+                barcode=f"69012345679{offset + 6:02d}",
+                cost_price=cost,
+                sale_price=sale,
+                stock_lower=lower,
+                stock_upper=upper,
+                status=1,
+            )
+        )
+    if goods:
+        session.add_all(goods)
+        await session.flush()
 
 
 async def _ensure_permissions(session: AsyncSession) -> None:
@@ -701,6 +781,25 @@ async def _ensure_permissions(session: AsyncSession) -> None:
                 ("提交采购订单", "pur:order:submit", 3),
                 ("审核采购订单", "pur:order:audit", 4),
                 ("关闭采购订单", "pur:order:close", 5),
+            ),
+        ),
+        # P-03 采购入库 / P-04 采购退货：老库补齐按钮并授权 admin（幂等）
+        (
+            "pur:inbound:list",
+            (
+                ("新增采购入库", "pur:inbound:add", 1),
+                ("修改采购入库", "pur:inbound:edit", 2),
+                ("确认采购入库", "pur:inbound:confirm", 3),
+                ("删除采购入库", "pur:inbound:delete", 4),
+            ),
+        ),
+        (
+            "pur:return:list",
+            (
+                ("新增采购退货", "pur:return:add", 1),
+                ("修改采购退货", "pur:return:edit", 2),
+                ("确认采购退货", "pur:return:confirm", 3),
+                ("删除采购退货", "pur:return:delete", 4),
             ),
         ),
     )

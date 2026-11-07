@@ -16,7 +16,9 @@ from app.api.v1.endpoints import (
     inventory,
     log,
     purchase_apply,
+    purchase_inbound,
     purchase_order,
+    purchase_return,
     supplier,
     system,
     task,
@@ -101,3 +103,7 @@ api_router.include_router(employee.router)
 api_router.include_router(purchase_apply.router)
 # P-02：采购订单 /purchase/orders；/orders/from-apply/{apply_id} 为静态段，先于 /orders/{order_id}
 api_router.include_router(purchase_order.router)
+# P-03：采购入库 /purchase/inbounds；/inbounds/from-order/{order_id} 为静态段，先于 /{inbound_id}
+api_router.include_router(purchase_inbound.router)
+# P-04：采购退货 /purchase/returns；/returns/source 为静态段，先于 /{return_id}
+api_router.include_router(purchase_return.router)

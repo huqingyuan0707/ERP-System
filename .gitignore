@@ -4,6 +4,9 @@ __pycache__/
 .venv/
 venv/
 *.db
+# 本地手工复现用的 SQLite 库及其日志文件（测试/调试产物，不入库）
+*.sqlite3
+*.sqlite3-journal
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
@@ -17,6 +20,10 @@ htmlcov/
 backend/reports/
 # 一次性修复脚本（已完成使命，不保留）
 backend/_fix_perm_param.py
+# 一次性数据体检脚本（含数据库连接串，属临时产物，不入库）
+backend/_audit_data.py
+# 个人工作助手记忆目录，不入库
+.workbuddy/
 
 # Node
 node_modules/

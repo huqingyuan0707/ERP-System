@@ -54,6 +54,15 @@ class PurOrderRepository(BaseRepository[PurOrder]):
         stmt = self._apply_tenant_filter(stmt)
         return (await self.db.execute(stmt)).scalar_one_or_none()
 
+    async def list_all(self, stmt: Select) -> list[PurOrder]:
+        """不分页取回全部匹配订单（导出发票/打印清单用），租户过滤在此统一追加。
+
+        导出的筛选条件与列表共用 build_query，再由 Service 叠加数据范围，
+        保证「页面看得到的才导得出」，避免越权导出他人单据。
+        """
+        stmt = self._apply_tenant_filter(stmt)
+        return list((await self.db.execute(stmt)).scalars().all())
+
     async def list_items(self, order_ids: list[int]) -> dict[int, list[PurOrderItem]]:
         """按订单 ID 批量查明细（含已软删行，供内部状态判断），一次 IN 查询避免 N+1。"""
         if not order_ids:
