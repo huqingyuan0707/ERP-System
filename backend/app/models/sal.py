@@ -39,7 +39,6 @@ from app.models.mixins import (  # 公共字段 Mixin 与跨库主键类型
     VersionMixin,  # version 乐观锁
 )
 
-
 # 明细表公共继承链：有审计与软删，但无乐观锁 version（设计文档第 2 节例外规则）
 _ITEM_MIXINS = (TimestampMixin, UserMixin, SoftDeleteMixin, TenantMixin)
 
@@ -72,10 +71,8 @@ class SalQuotation(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Ten
     )  # 客户，不级联删除
     quote_date: Mapped[date] = mapped_column(Date, nullable=False)  # 报价日期
     valid_until: Mapped[date | None] = mapped_column(Date)  # 报价有效期，可空
-    # 0 草稿/1 已发送/2 已失效
-    status: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)
-    # 含税合计
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
+    status: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)  # 0 草稿/1 已发送/2 已失效
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)  # 含税合计
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)  # 税额
     remark: Mapped[str | None] = mapped_column(String(255))  # 备注
 
@@ -100,8 +97,7 @@ class SalQuotationItem(*_ITEM_MIXINS, Base):
     quotation_id: Mapped[int] = mapped_column(
         BIGINT_PK, ForeignKey("sal_quotation.id", ondelete="CASCADE"), nullable=False
     )  # 所属报价单，级联删除
-    # 商品
-    goods_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False)
+    goods_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False)  # 商品
     qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)  # 报价数量
     price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)  # 含税单价
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)  # 行金额，Service 重算
@@ -136,12 +132,9 @@ class SalOrder(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, TenantM
     )  # 客户，不级联删除
     order_date: Mapped[date] = mapped_column(Date, nullable=False)  # 下单日期
     status: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)  # 单据状态
-    # 折扣后含税合计
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
-    # 折扣后税额
-    tax_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
-    # 整单折扣金额
-    discount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)  # 折扣后含税合计
+    tax_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)  # 折扣后税额
+    discount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)  # 整单折扣金额
     audit_by: Mapped[int | None] = mapped_column(BIGINT_PK)  # 审核人用户 ID
     audit_at: Mapped[date | None] = mapped_column(Date)  # 审核时间
     audit_remark: Mapped[str | None] = mapped_column(String(255))  # 驳回原因
@@ -165,26 +158,21 @@ class SalOrderItem(*_ITEM_MIXINS, Base):
         Index("idx_sal_order_item_order", "order_id"),  # 按订单查明细
         CheckConstraint("qty > 0", name="ck_sal_order_item_qty_positive"),  # 订购数量必须为正
         CheckConstraint("price >= 0", name="ck_sal_order_item_price_nonnegative"),  # 单价非负
-        # 税率 0～1
-        CheckConstraint("tax_rate >= 0 AND tax_rate <= 1", name="ck_sal_order_item_tax_rate"),
-        # 累计出库非负
-        CheckConstraint("outbound_qty >= 0", name="ck_sal_order_item_outbound_nonnegative"),
+        CheckConstraint("tax_rate >= 0 AND tax_rate <= 1", name="ck_sal_order_item_tax_rate"),  # 税率 0～1
+        CheckConstraint("outbound_qty >= 0", name="ck_sal_order_item_outbound_nonnegative"),  # 累计出库非负
     )
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)  # 主键
     order_id: Mapped[int] = mapped_column(
         BIGINT_PK, ForeignKey("sal_order.id", ondelete="CASCADE"), nullable=False
     )  # 所属订单，级联删除
-    # 商品
-    goods_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False)
-    # 单位
-    unit_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_unit.id"), nullable=False)
+    goods_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False)  # 商品
+    unit_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_unit.id"), nullable=False)  # 单位
     qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)  # 订购数量
     price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)  # 含税单价
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)  # 行金额，Service 重算
     tax_rate: Mapped[Decimal] = mapped_column(Numeric(6, 4), default=0, nullable=False)  # 税率 0～1
-    # 累计已出库
-    outbound_qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=0, nullable=False)
+    outbound_qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), default=0, nullable=False)  # 累计已出库
 
 
 # 销售出库主表：sal_outbound，草稿保存即锁库存，确认后释放锁定并扣账面、生成应收
@@ -221,8 +209,7 @@ class SalOutbound(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Tena
     )  # 来源订单
     outbound_date: Mapped[date] = mapped_column(Date, nullable=False)  # 出库日期，应收到期日基准
     status: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)  # 0 草稿/1 已确认
-    # 含税合计
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)  # 含税合计
     tax_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)  # 税额
     remark: Mapped[str | None] = mapped_column(String(255))  # 备注
 
@@ -251,8 +238,7 @@ class SalOutboundItem(*_ITEM_MIXINS, Base):
     order_item_id: Mapped[int] = mapped_column(
         BIGINT_PK, ForeignKey("sal_order_item.id"), nullable=False
     )
-    # 商品
-    goods_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False)
+    goods_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False)  # 商品
     qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)  # 出库数量
     price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)  # 含税单价
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)  # 行金额，Service 重算
@@ -275,8 +261,7 @@ class SalReturn(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Tenant
         Index("uq_sal_return_no", "return_no", unique=True),  # 退货单号唯一
         # 按原单号冲减应收与校验累计退货量，必须建索引
         Index("idx_sal_return_source_no", "source_no"),
-        # 退货金额非负
-        CheckConstraint("total_amount >= 0", name="ck_sal_return_total_nonnegative"),
+        CheckConstraint("total_amount >= 0", name="ck_sal_return_total_nonnegative"),  # 退货金额非负
     )
 
     id: Mapped[int] = mapped_column(BIGINT_PK, primary_key=True, autoincrement=True)  # 主键
@@ -290,8 +275,7 @@ class SalReturn(TimestampMixin, UserMixin, SoftDeleteMixin, VersionMixin, Tenant
     source_no: Mapped[str] = mapped_column(String(64), nullable=False)  # 原出库单号，必填
     return_date: Mapped[date] = mapped_column(Date, nullable=False)  # 退货日期
     status: Mapped[int] = mapped_column(SmallInteger, default=0, nullable=False)  # 0 草稿/1 已确认
-    # 退货总金额
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=0, nullable=False)  # 退货总金额
     remark: Mapped[str | None] = mapped_column(String(255))  # 备注
 
 
@@ -315,8 +299,7 @@ class SalReturnItem(*_ITEM_MIXINS, Base):
     return_id: Mapped[int] = mapped_column(
         BIGINT_PK, ForeignKey("sal_return.id", ondelete="CASCADE"), nullable=False
     )  # 所属退货单，级联删除
-    # 商品
-    goods_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False)
+    goods_id: Mapped[int] = mapped_column(BIGINT_PK, ForeignKey("bd_goods.id"), nullable=False)  # 商品
     qty: Mapped[Decimal] = mapped_column(Numeric(18, 4), nullable=False)  # 退货数量
     price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)  # 退货单价
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)  # 行金额，Service 重算

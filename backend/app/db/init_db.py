@@ -226,6 +226,8 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     # P-03 采购入库 / P-04 采购退货：按钮权限挂在各自菜单下
     inbound_menu = next(menu for menu in menus if menu.perm_code == "pur:inbound:list")
     return_menu = next(menu for menu in menus if menu.perm_code == "pur:return:list")
+    # SA-01 销售报价：按钮权限挂在「销售报价」菜单下
+    quotation_menu = next(menu for menu in menus if menu.perm_code == "sal:quotation:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -286,6 +288,11 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("修改采购退货", "pur:return:edit", return_menu.id, 2),
         _button("确认采购退货", "pur:return:confirm", return_menu.id, 3),
         _button("删除采购退货", "pur:return:delete", return_menu.id, 4),
+        # SA-01 销售报价：新增/修改/删除（查看权限复用菜单上的 sal:quotation:list，
+        # 发送/作废属于状态变更，归入 edit，需求条目只定义 view/add/edit/delete 四个码）
+        _button("新增销售报价", "sal:quotation:add", quotation_menu.id, 1),
+        _button("修改销售报价", "sal:quotation:edit", quotation_menu.id, 2),
+        _button("删除销售报价", "sal:quotation:delete", quotation_menu.id, 3),
         _button("超级权限", "*", dir_sys.id, 99),
     ]
     session.add_all(buttons)
@@ -825,6 +832,46 @@ async def _ensure_permissions(session: AsyncSession) -> None:
 
         for admin_role in admin_roles:
             for permission in menu_permissions:
+                granted = await session.scalar(
+                    select(SysRolePermission.role_id).where(
+                        SysRolePermission.role_id == admin_role.id,
+                        SysRolePermission.permission_id == permission.id,
+                    )
+                )
+                if granted is None:
+                    session.add(
+                        SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
+                    )
+    await session.flush()
+
+    # SA-01 销售报价按钮权限：老库补齐按钮并授权 admin（幂等，与迁移 e2f4a6b8c0d2 同口径）
+    quotation_menu_id = await session.scalar(
+        select(SysPermission.id).where(SysPermission.perm_code == "sal:quotation:list")
+    )
+    if quotation_menu_id is not None:
+        quotation_specs: tuple[tuple[str, str, int], ...] = (
+            ("新增销售报价", "sal:quotation:add", 1),
+            ("修改销售报价", "sal:quotation:edit", 2),
+            ("删除销售报价", "sal:quotation:delete", 3),
+        )
+        quotation_permissions: list[SysPermission] = []
+        for name, perm_code, sort in quotation_specs:
+            permission = await session.scalar(
+                select(SysPermission).where(SysPermission.perm_code == perm_code)
+            )
+            if permission is None:
+                permission = SysPermission(
+                    name=name,
+                    type=3,
+                    perm_code=perm_code,
+                    parent_id=quotation_menu_id,
+                    sort=sort,
+                )
+                session.add(permission)
+                await session.flush()
+            quotation_permissions.append(permission)
+        for admin_role in admin_roles:
+            for permission in quotation_permissions:
                 granted = await session.scalar(
                     select(SysRolePermission.role_id).where(
                         SysRolePermission.role_id == admin_role.id,

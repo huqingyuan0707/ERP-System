@@ -19,6 +19,7 @@ from app.api.v1.endpoints import (
     purchase_inbound,
     purchase_order,
     purchase_return,
+    sal_quotation,
     supplier,
     system,
     task,
@@ -107,3 +108,5 @@ api_router.include_router(purchase_order.router)
 api_router.include_router(purchase_inbound.router)
 # P-04：采购退货 /purchase/returns；/returns/source 为静态段，先于 /{return_id}
 api_router.include_router(purchase_return.router)
+# SA-01：销售报价 /sales/quotations；列表与新增为静态路径，先于 /{quotation_id} 注册
+api_router.include_router(sal_quotation.router)
