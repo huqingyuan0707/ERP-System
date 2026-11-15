@@ -24,9 +24,17 @@ DICT_CACHE_PREFIX = "dict:"
 class DictService:
     """字典业务逻辑。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, *, auto_commit: bool = True) -> None:
         self._db = db
         self._repo = DictRepository(db)
+        self._auto_commit = auto_commit
+
+    async def _flush_or_commit(self) -> None:
+        """端点用 IdempotencyService 包装时关闭自动提交，由它统一提交业务与幂等记录。"""
+        if self._auto_commit:
+            await self._db.commit()
+        else:
+            await self._db.flush()
 
     async def get_grouped(self) -> dict[str, list[dict[str, str]]]:
         """全量启用字典，按类型分组（缓存 dicts:all）。"""
@@ -68,7 +76,7 @@ class DictService:
         )
         self._db.add(entity)
         try:
-            await self._db.commit()
+            await self._flush_or_commit()
         except IntegrityError as exc:
             await self._db.rollback()
             raise AppException(ErrorCode.CONFLICT, f"字典类型编码 {payload.code} 已存在") from exc
@@ -84,7 +92,7 @@ class DictService:
             value = getattr(payload, field)
             if value is not None:
                 setattr(entity, field, value)
-        await self._db.commit()
+        await self._flush_or_commit()
         await cache_delete(DICT_CACHE_ALL)
         await cache_delete_prefix(f"{DICT_CACHE_PREFIX}{entity.code}")
         return entity
@@ -97,7 +105,7 @@ class DictService:
         entity.is_deleted = True
         for item in await self._repo.list_items(entity.code):
             item.is_deleted = True
-        await self._db.commit()
+        await self._flush_or_commit()
         await cache_delete(DICT_CACHE_ALL)
         await cache_delete_prefix(f"{DICT_CACHE_PREFIX}{entity.code}")
 
@@ -115,7 +123,7 @@ class DictService:
         )
         self._db.add(entity)
         try:
-            await self._db.commit()
+            await self._flush_or_commit()
         except IntegrityError as exc:
             await self._db.rollback()
             raise AppException(
@@ -135,7 +143,7 @@ class DictService:
             if value is not None:
                 setattr(entity, field, value)
         try:
-            await self._db.commit()
+            await self._flush_or_commit()
         except IntegrityError as exc:
             await self._db.rollback()
             raise AppException(
@@ -151,6 +159,6 @@ class DictService:
         if entity is None:
             raise AppException(ErrorCode.NOT_FOUND, "字典项不存在")
         entity.is_deleted = True
-        await self._db.commit()
+        await self._flush_or_commit()
         await cache_delete(DICT_CACHE_ALL)
         await cache_delete_prefix(f"{DICT_CACHE_PREFIX}{entity.type_code}")

@@ -1,10 +1,14 @@
-"""字典端点：登录用户分组查询；维护接口按 sys:dict:* 权限。"""
+"""字典端点：登录用户分组查询；维护接口按 sys:dict:* 权限。
+
+写操作统一经 IdempotencyService 包装：带 Idempotency-Key 时业务与幂等记录
+同事务提交、重放返回首次结果；不带键时行为与改造前一致。
+"""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header
 
-from app.core.deps import CurrentUserDep, DbDep, require_perm
+from app.core.deps import CurrentUserDep, DbDep, TenantDep, require_perm
 from app.models.sys import SysUser
 from app.schemas.common import ApiResponse, success_response
 from app.schemas.dict import (
@@ -16,9 +20,14 @@ from app.schemas.dict import (
     DictTypeUpdate,
 )
 from app.services.dict import DictService
+from app.services.idempotency import IdempotencyService
 
 
 router = APIRouter(prefix="/sys/dicts", tags=["数据字典"])
+
+IdempotencyKeyHeader = Annotated[
+    str | None, Header(alias="Idempotency-Key", min_length=1, max_length=128)
+]
 
 
 @router.get("", summary="全量字典（按类型分组，登录用户）")
@@ -44,9 +53,23 @@ async def list_types(
 async def create_type(
     payload: DictTypeCreate,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("base:dict:add"))],
+    tenant_id: TenantDep,
+    current_user: Annotated[SysUser, Depends(require_perm("base:dict:add"))],
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> ApiResponse[DictTypeOut]:
-    result = await DictService(db).create_type(payload)
+    service = DictService(db, auto_commit=False)
+
+    async def operation():
+        return DictTypeOut.model_validate(await service.create_type(payload))
+
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="create_dict_type",
+        idempotency_key=idempotency_key,
+        request_body=payload,
+        operation=operation,
+    )
     return success_response(DictTypeOut.model_validate(result))
 
 
@@ -55,9 +78,23 @@ async def update_type(
     type_id: int,
     payload: DictTypeUpdate,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("base:dict:edit"))],
+    tenant_id: TenantDep,
+    current_user: Annotated[SysUser, Depends(require_perm("base:dict:edit"))],
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> ApiResponse[DictTypeOut]:
-    result = await DictService(db).update_type(type_id, payload)
+    service = DictService(db, auto_commit=False)
+
+    async def operation():
+        return DictTypeOut.model_validate(await service.update_type(type_id, payload))
+
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="update_dict_type",
+        idempotency_key=idempotency_key,
+        request_body=payload,
+        operation=operation,
+    )
     return success_response(DictTypeOut.model_validate(result))
 
 
@@ -65,9 +102,23 @@ async def update_type(
 async def delete_type(
     type_id: int,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("base:dict:delete"))],
+    tenant_id: TenantDep,
+    current_user: Annotated[SysUser, Depends(require_perm("base:dict:delete"))],
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> ApiResponse[None]:
-    await DictService(db).delete_type(type_id)
+    service = DictService(db, auto_commit=False)
+
+    async def operation():
+        await service.delete_type(type_id)
+
+    await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="delete_dict_type",
+        idempotency_key=idempotency_key,
+        request_body={"type_id": type_id},
+        operation=operation,
+    )
     return success_response(None)
 
 
@@ -86,9 +137,23 @@ async def create_item(
     type_code: str,
     payload: DictItemCreate,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("base:dict:add"))],
+    tenant_id: TenantDep,
+    current_user: Annotated[SysUser, Depends(require_perm("base:dict:add"))],
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> ApiResponse[DictItemOut]:
-    result = await DictService(db).create_item(type_code, payload)
+    service = DictService(db, auto_commit=False)
+
+    async def operation():
+        return DictItemOut.model_validate(await service.create_item(type_code, payload))
+
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="create_dict_item",
+        idempotency_key=idempotency_key,
+        request_body={"type_code": type_code, **payload.model_dump(mode="json")},
+        operation=operation,
+    )
     return success_response(DictItemOut.model_validate(result))
 
 
@@ -97,9 +162,23 @@ async def update_item(
     item_id: int,
     payload: DictItemUpdate,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("base:dict:edit"))],
+    tenant_id: TenantDep,
+    current_user: Annotated[SysUser, Depends(require_perm("base:dict:edit"))],
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> ApiResponse[DictItemOut]:
-    result = await DictService(db).update_item(item_id, payload)
+    service = DictService(db, auto_commit=False)
+
+    async def operation():
+        return DictItemOut.model_validate(await service.update_item(item_id, payload))
+
+    result = await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="update_dict_item",
+        idempotency_key=idempotency_key,
+        request_body=payload,
+        operation=operation,
+    )
     return success_response(DictItemOut.model_validate(result))
 
 
@@ -107,7 +186,21 @@ async def update_item(
 async def delete_item(
     item_id: int,
     db: DbDep,
-    _: Annotated[SysUser, Depends(require_perm("base:dict:delete"))],
+    tenant_id: TenantDep,
+    current_user: Annotated[SysUser, Depends(require_perm("base:dict:delete"))],
+    idempotency_key: IdempotencyKeyHeader = None,
 ) -> ApiResponse[None]:
-    await DictService(db).delete_item(item_id)
+    service = DictService(db, auto_commit=False)
+
+    async def operation():
+        await service.delete_item(item_id)
+
+    await IdempotencyService(db).execute(
+        tenant_id=tenant_id,
+        user_id=current_user.id,
+        biz_type="delete_dict_item",
+        idempotency_key=idempotency_key,
+        request_body={"item_id": item_id},
+        operation=operation,
+    )
     return success_response(None)

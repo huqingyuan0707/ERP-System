@@ -17,9 +17,17 @@ CONFIG_CACHE_ALL = "configs:all"
 class ConfigService:
     """系统参数业务逻辑。"""
 
-    def __init__(self, db: AsyncSession) -> None:
+    def __init__(self, db: AsyncSession, *, auto_commit: bool = True) -> None:
         self._db = db
         self._repo = ConfigRepository(db)
+        self._auto_commit = auto_commit
+
+    async def _flush_or_commit(self) -> None:
+        """端点用 IdempotencyService 包装时关闭自动提交，由它统一提交业务与幂等记录。"""
+        if self._auto_commit:
+            await self._db.commit()
+        else:
+            await self._db.flush()
 
     async def list_all(self) -> list[SysConfig]:
         """全部参数（维护页/前端 configStore）。"""
@@ -53,7 +61,7 @@ class ConfigService:
                 raise AppException(ErrorCode.NOT_FOUND, f"参数 {item.key} 不存在")
             entity.value = item.value
             updated.append(entity)
-        await self._db.commit()
+        await self._flush_or_commit()
         for entity in updated:
             await cache_delete(f"{CONFIG_CACHE_PREFIX}{entity.key}")
         await cache_delete(CONFIG_CACHE_ALL)
