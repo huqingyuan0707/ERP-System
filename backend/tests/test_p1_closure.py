@@ -22,6 +22,7 @@ from app.main import app
 from app.models.base_data import BdGoods
 from app.models.sys import SysOperLog
 
+
 API = "/api/v1"
 ADMIN = ("admin", "admin123")
 

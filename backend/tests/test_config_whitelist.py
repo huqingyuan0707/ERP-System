@@ -18,6 +18,7 @@ from app.db.session import AsyncSessionLocal
 from app.main import app
 from app.models.sys import SysConfig, SysOperLog
 
+
 API = "/api/v1"
 SENSITIVE_KEY = "security.jwt_secret"
 
