@@ -33,6 +33,10 @@ from app.services.user import UserService
 # tags=["系统管理"] 只是给自动生成的接口文档（/docs）做分类显示。
 router = APIRouter(prefix="/sys", tags=["系统管理"])
 
+# 新增用户/角色的防重占位保留时长。Redis 只是「防连点」的第一道门，
+# 不是业务幂等记录，因此用短 TTL：即使进程崩溃也不会把同名账号锁住一整天。
+CREATE_IDEMPOTENCY_TTL = 60
+
 
 # ---------------------------------------------------------------------------
 # 用户管理相关接口（SYS-01 ~ SYS-06）
@@ -58,12 +62,20 @@ async def create_user(
     current_user: Annotated[SysUser, Depends(require_perm("sys:user:add"))],
     redis=Depends(get_redis),
 ) -> ApiResponse[UserOut]:
+    idem_key = None
     if redis is not None:
         idem_key = f"idempotency:create_user:{tenant_id}:{current_user.id}:{payload.username}"
-        existed = await redis.set(idem_key, "1", ex=86400, nx=True)
+        existed = await redis.set(idem_key, "1", ex=CREATE_IDEMPOTENCY_TTL, nx=True)
         if not existed:
             raise AppException(ErrorCode.CONFLICT, "重复提交，请勿频繁新增用户")
-    result = await UserService(db, tenant_id=tenant_id).create_user(payload, current_user.id)
+    try:
+        result = await UserService(db, tenant_id=tenant_id).create_user(payload, current_user.id)
+    except Exception:
+        # 业务失败（校验/唯一约束/数据库异常）立即释放占位，允许同名账号重试；
+        # 否则占位会一直残留到 TTL 到期，旧实现是 24 小时。
+        if idem_key is not None:
+            await redis.delete(idem_key)
+        raise
     return success_response(result)
 
 
@@ -174,12 +186,18 @@ async def create_role(
     _: Annotated[SysUser, Depends(require_perm("sys:role:add"))],
     redis=Depends(get_redis),
 ) -> ApiResponse[RoleOut]:
+    idem_key = None
     if redis is not None:
         idem_key = f"idempotency:create_role:{tenant_id}:{payload.code}"
-        existed = await redis.set(idem_key, "1", ex=86400, nx=True)
+        existed = await redis.set(idem_key, "1", ex=CREATE_IDEMPOTENCY_TTL, nx=True)
         if not existed:
             raise AppException(ErrorCode.CONFLICT, "重复提交，请勿频繁新增角色")
-    result = await RoleService(db, tenant_id=tenant_id).create_role(payload)
+    try:
+        result = await RoleService(db, tenant_id=tenant_id).create_role(payload)
+    except Exception:
+        if idem_key is not None:
+            await redis.delete(idem_key)
+        raise
     return success_response(RoleOut.model_validate(result))
 
 
