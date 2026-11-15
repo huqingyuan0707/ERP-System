@@ -6,8 +6,6 @@ import { ElMessage } from 'element-plus'
 import {
   exportGoods,
   exportStocks,
-  exportReport,
-  exportStatement,
   getTaskDetail,
   downloadTaskFile,
   isTerminalTaskError,
@@ -18,10 +16,6 @@ interface Props {
   type?: 'goods' | 'stocks' | 'report' | 'statement'
   /** 导出参数（提交任务时传给后端） */
   params?: Record<string, unknown>
-  /** 报表类型（type='report' 时必填） */
-  reportType?: string
-  /** 对账单ID（type='statement' 时必填） */
-  statementId?: number
   /** 按钮标签 */
   label?: string
   /** 是否禁用 */
@@ -32,8 +26,6 @@ const props = withDefaults(defineProps<Props>(), {
   type: 'goods',
   // 对象类型默认值必须用工厂函数，避免多个组件实例共享同一引用
   params: () => ({}),
-  reportType: '',
-  statementId: 0,
   label: '导出 Excel',
   disabled: false,
 })
@@ -65,6 +57,8 @@ const submitExport = async (): Promise<void> => {
   if (props.disabled || loading.value || polling.value) return
   // 报表/对账单导出后端仍是占位实现（会返回 400）。接入真实数据前直接给出
   // 明确提示，避免用户以为任务已提交后空等轮询。
+  // 注意：此处的提前 return 会让 TS 把 props.type 收窄为 'goods' | 'stocks'，
+  // 因此下面的 switch 只能保留这两个分支，report/statement 的提交逻辑待接入后再补。
   if (props.type === 'report' || props.type === 'statement') {
     ElMessage.warning('报表/对账单导出尚未接入，请使用对应业务页面的导出功能')
     return
@@ -75,16 +69,10 @@ const submitExport = async (): Promise<void> => {
     progress.value = 0
     switch (props.type) {
       case 'goods':
-        taskId = (await exportGoods(props.params as Record<string, unknown>)).taskId
+        taskId = (await exportGoods(props.params)).taskId
         break
       case 'stocks':
-        taskId = (await exportStocks(props.params as Record<string, unknown>)).taskId
-        break
-      case 'report':
-        taskId = (await exportReport(props.reportType ?? '')).taskId
-        break
-      case 'statement':
-        taskId = (await exportStatement(props.statementId ?? 0)).taskId
+        taskId = (await exportStocks(props.params)).taskId
         break
     }
     if (disposed) return
