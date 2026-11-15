@@ -84,6 +84,8 @@ class PurApplyUpdate(BaseModel):
     remark: str | None = Field(default=None, max_length=255)
     # 明细：不传表示只改主表字段；传了就整单替换（旧行软删，保留流水便于追溯），最多 200 行
     items: list[PurApplyItemIn] | None = Field(default=None, max_length=200)
+    # 乐观锁版本号：前端编辑时回传；未传仍靠条件 UPDATE 防并发覆盖
+    version: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def reject_duplicate_goods(self) -> "PurApplyUpdate":

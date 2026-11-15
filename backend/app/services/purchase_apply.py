@@ -43,6 +43,7 @@ from app.schemas.purchase_apply import (
 )
 from app.services.audit import write_oper_log
 from app.utils.bill_no import generate_bill_no
+from app.utils.optimistic_lock import bump_version
 from app.utils.pagination import paginate_result
 
 
@@ -157,8 +158,15 @@ class PurchaseApplyService:
                 items = await self._load_items(payload.items)
                 await self._replace_items(apply.id, items, user.id)
             apply.updated_by = user.id
-            # 乐观锁 +1：并发修改同一草稿时，后提交者与前置读取的版本不一致可被识别
-            apply.version += 1
+            # 乐观锁：条件 UPDATE 抢占版本，前端回传的 version 不一致直接 409
+            await bump_version(
+                self._db,
+                PurApply,
+                apply,
+                tenant_id=self._tenant_id,
+                expected=payload.version,
+                user_id=user.id,
+            )
             await self._write_log(user.id, "修改采购申请", apply.id, apply.apply_no)
             await self._db.flush()
             refreshed = await self._repo.get_with_items(apply.id)
@@ -213,7 +221,14 @@ class PurchaseApplyService:
             # 重新提交时清空上一次驳回原因，避免历史意见误导审核人
             apply.audit_remark = None
             apply.updated_by = user.id
-            apply.version += 1
+            await bump_version(
+                self._db,
+                PurApply,
+                apply,
+                tenant_id=self._tenant_id,
+                expected=None,
+                user_id=user.id,
+            )
             await self._write_log(user.id, "提交采购申请", apply.id, apply.apply_no)
             await self._db.flush()
             refreshed = await self._repo.get_with_items(apply.id)
@@ -254,7 +269,14 @@ class PurchaseApplyService:
             # 模型 audit_at 为 DATE 字段（只到天），精确时间以 sys_oper_log.created_at 为准
             apply.audit_at = date.today()
             apply.updated_by = user.id
-            apply.version += 1
+            await bump_version(
+                self._db,
+                PurApply,
+                apply,
+                tenant_id=self._tenant_id,
+                expected=None,
+                user_id=user.id,
+            )
             await self._write_log(
                 user.id,
                 action,

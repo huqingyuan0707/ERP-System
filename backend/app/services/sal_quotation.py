@@ -41,6 +41,7 @@ from app.schemas.sal_quotation import (
 )
 from app.services.audit import write_oper_log
 from app.utils.bill_no import generate_bill_no
+from app.utils.optimistic_lock import bump_version
 from app.utils.pagination import paginate_result
 
 
@@ -168,8 +169,15 @@ class SalQuotationService:
                     (amount for _, amount in amounts), Decimal("0")
                 )
             quotation.updated_by = user.id
-            # 乐观锁 +1：并发修改同一草稿时，后提交者与前置读取的版本不一致可被识别
-            quotation.version += 1
+            # 乐观锁：条件 UPDATE 抢占版本，前端回传的 version 不一致直接 409
+            await bump_version(
+                self._db,
+                SalQuotation,
+                quotation,
+                tenant_id=self._tenant_id,
+                expected=payload.version,
+                user_id=user.id,
+            )
             await self._write_log(user.id, "修改销售报价", quotation.id, quotation.quote_no)
             await self._db.flush()
             refreshed = await self._repo.get_with_items(quotation.id)
@@ -239,7 +247,14 @@ class SalQuotationService:
                 )
             quotation.status = SalQuotationStatus.SENT
             quotation.updated_by = user.id
-            quotation.version += 1
+            await bump_version(
+                self._db,
+                SalQuotation,
+                quotation,
+                tenant_id=self._tenant_id,
+                expected=None,
+                user_id=user.id,
+            )
             await self._write_log(user.id, "发送销售报价", quotation.id, quotation.quote_no)
             await self._db.flush()
             refreshed = await self._repo.get_with_items(quotation.id)
@@ -265,7 +280,14 @@ class SalQuotationService:
                 raise AppException(ErrorCode.CONFLICT, "报价单已失效，不能重复作废")
             quotation.status = SalQuotationStatus.INVALID
             quotation.updated_by = user.id
-            quotation.version += 1
+            await bump_version(
+                self._db,
+                SalQuotation,
+                quotation,
+                tenant_id=self._tenant_id,
+                expected=None,
+                user_id=user.id,
+            )
             await self._write_log(user.id, "作废销售报价", quotation.id, quotation.quote_no)
             await self._db.flush()
             refreshed = await self._repo.get_with_items(quotation.id)

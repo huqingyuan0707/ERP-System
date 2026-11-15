@@ -1,4 +1,5 @@
-"""销售报价 Schema（SA-01）：字段按《数据库表设计.md》7.1/7.2 节 sal_quotation / sal_quotation_item。
+"""销售报价 Schema（SA-01）：字段按《数据库表设计.md》7.1/7.2 节
+sal_quotation / sal_quotation_item。
 
 状态口径（与 app/models/sal.py 保持一致，禁止裸数字散落业务代码）：
   - 0 草稿：可编辑、可删除、可发送
@@ -104,6 +105,8 @@ class SalQuotationUpdate(BaseModel):
     remark: str | None = Field(default=None, max_length=255)
     # 明细：不传表示只改主表字段；传了就整单替换（旧行软删，保留历史便于追溯），最多 200 行
     items: list[SalQuotationItemIn] | None = Field(default=None, max_length=200)
+    # 乐观锁版本号：前端编辑时回传；未传仍靠条件 UPDATE 防并发覆盖
+    version: int | None = Field(default=None, ge=1)
 
     @model_validator(mode="after")
     def reject_duplicate_goods(self) -> "SalQuotationUpdate":
