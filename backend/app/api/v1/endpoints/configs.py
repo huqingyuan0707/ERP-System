@@ -42,7 +42,11 @@ async def update_configs(
     service = ConfigService(db, auto_commit=False)
 
     async def operation():
-        entities = await service.batch_update(payload.items)
+        entities = await service.batch_update(
+            payload.items,
+            operator_id=current_user.id,
+            tenant_id=tenant_id,
+        )
         # 逐条转成出参并按 camelCase 别名输出，交给统一响应包装
         return [
             ConfigOut.model_validate(c).model_dump(mode="json", by_alias=True)
