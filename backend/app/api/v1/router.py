@@ -8,6 +8,7 @@ from app.api.v1.endpoints import (
     auth,
     configs,
     customer,
+    dashboard,
     dept,
     dicts,
     employee,
@@ -28,7 +29,6 @@ from app.api.v1.endpoints import (
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import ApiResponse, success_response
-
 
 logger = logging.getLogger("app.health")
 
@@ -84,6 +84,8 @@ def _select_one():
 
 
 api_router.include_router(auth.router)
+# R-01：经营看板（只读聚合，登录用户可见）
+api_router.include_router(dashboard.router)
 api_router.include_router(system.router)
 api_router.include_router(dicts.router)
 api_router.include_router(configs.router)
