@@ -63,7 +63,13 @@ def upgrade() -> None:
         op.create_table(
             "bd_employee",
             sa.Column("id", _BIGINT_PK, primary_key=True, autoincrement=True),
-            sa.Column("tenant_id", _BIGINT_PK, nullable=False, server_default="1"),
+            sa.Column(
+                "tenant_id",
+                _BIGINT_PK,
+                nullable=False,
+                server_default="1",
+                comment="租户 ID",
+            ),
             sa.Column(
                 "created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False
             ),

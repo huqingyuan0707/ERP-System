@@ -136,6 +136,19 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _index_exists(conn: sa.Connection, table: str, name: str) -> bool:
+    """判断表上是否已存在指定索引。
+
+    早期迁移（如 e4a8b7c6d5f4 建表时）已经内联创建过 tenant_id 等索引，
+    本迁移若再无条件 create_index 会在干净库上报 "关系已存在" 而中断，
+    因此所有索引操作都要先判断存在性。
+    """
+    inspector = sa.inspect(conn)
+    if not inspector.has_table(table):
+        return False
+    return name in {index["name"] for index in inspector.get_indexes(table)}
+
+
 def upgrade() -> None:
     conn = op.get_bind()
     dialect = conn.dialect.name
@@ -897,15 +910,23 @@ def upgrade() -> None:
                existing_type=sa.NUMERIC(precision=18, scale=4),
                type_=sa.Numeric(precision=18, scale=2),
                existing_nullable=False)
-    # 删除旧的唯一索引，添加新的 tenant_id 包含的索引
-    # 使用条件判断避免删除不存在的索引
+    # 删除旧的唯一索引并按部分唯一索引重建：模型要求「仓库+商品+租户」在未删除行上唯一，
+    # 旧索引把 is_deleted 也算进唯一键，软删后无法再插入相同组合，这里必须换掉并重建。
     if dialect == "postgresql":
         try:
             op.drop_index('uq_inv_stock_warehouse_goods_tenant', table_name='inv_stock')
         except Exception:
             # 索引不存在，跳过删除
             pass
-    op.create_index(op.f('ix_inv_stock_tenant_id'), 'inv_stock', ['tenant_id'], unique=False)
+        op.execute(
+            sa.text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_stock_warehouse_goods_tenant "
+                "ON inv_stock (warehouse_id, goods_id, tenant_id) WHERE (is_deleted = false)"
+            )
+        )
+    # 早期迁移建表时已内联 ix_inv_stock_tenant_id，这里只在缺失时补建
+    if not _index_exists(conn, "inv_stock", "ix_inv_stock_tenant_id"):
+        op.create_index(op.f('ix_inv_stock_tenant_id'), 'inv_stock', ['tenant_id'], unique=False)
     op.add_column('inv_stock_flow', sa.Column('operator_id', sa.BigInteger().with_variant(sa.Integer(), 'sqlite'), nullable=True))
     op.alter_column('inv_stock_flow', 'tenant_id',
                existing_type=sa.BIGINT(),
@@ -925,12 +946,20 @@ def upgrade() -> None:
                type_=sa.DateTime(timezone=True),
                existing_nullable=False,
                postgresql_using="biz_time::timestamp with time zone")
-    op.drop_index(op.f('ix_inv_stock_flow_biz_time'), table_name='inv_stock_flow')
-    op.drop_index(op.f('ix_inv_stock_flow_source_no'), table_name='inv_stock_flow')
-    op.create_index('idx_flow_goods_time', 'inv_stock_flow', ['goods_id', 'biz_time'], unique=False)
-    op.create_index('idx_flow_source_no', 'inv_stock_flow', ['source_no'], unique=False)
-    op.create_index('idx_flow_warehouse_time', 'inv_stock_flow', ['warehouse_id', 'biz_time'], unique=False)
-    op.create_index(op.f('ix_inv_stock_flow_tenant_id'), 'inv_stock_flow', ['tenant_id'], unique=False)
+    # 旧索引改名：先删旧名，再建新名；每步都判断存在性，避免干净库与存量库表现不一致
+    if _index_exists(conn, "inv_stock_flow", "ix_inv_stock_flow_biz_time"):
+        op.drop_index(op.f('ix_inv_stock_flow_biz_time'), table_name='inv_stock_flow')
+    if _index_exists(conn, "inv_stock_flow", "ix_inv_stock_flow_source_no"):
+        op.drop_index(op.f('ix_inv_stock_flow_source_no'), table_name='inv_stock_flow')
+    if not _index_exists(conn, "inv_stock_flow", "idx_flow_goods_time"):
+        op.create_index('idx_flow_goods_time', 'inv_stock_flow', ['goods_id', 'biz_time'], unique=False)
+    if not _index_exists(conn, "inv_stock_flow", "idx_flow_source_no"):
+        op.create_index('idx_flow_source_no', 'inv_stock_flow', ['source_no'], unique=False)
+    if not _index_exists(conn, "inv_stock_flow", "idx_flow_warehouse_time"):
+        op.create_index('idx_flow_warehouse_time', 'inv_stock_flow', ['warehouse_id', 'biz_time'], unique=False)
+    # 早期迁移建表时已内联 ix_inv_stock_flow_tenant_id，这里只在缺失时补建
+    if not _index_exists(conn, "inv_stock_flow", "ix_inv_stock_flow_tenant_id"):
+        op.create_index(op.f('ix_inv_stock_flow_tenant_id'), 'inv_stock_flow', ['tenant_id'], unique=False)
     # ### end Alembic commands ###
 
 
@@ -969,13 +998,19 @@ def downgrade() -> None:
     op.drop_table('fin_statement_item')
     op.drop_table('fin_statement')
     
-    # 还原inv_stock和inv_stock_flow的修改
-    op.drop_index(op.f('ix_inv_stock_flow_tenant_id'), table_name='inv_stock_flow')
-    op.drop_index('idx_flow_warehouse_time', table_name='inv_stock_flow')
-    op.drop_index('idx_flow_source_no', table_name='inv_stock_flow')
-    op.drop_index('idx_flow_goods_time', table_name='inv_stock_flow')
-    op.create_index(op.f('ix_inv_stock_flow_source_no'), 'inv_stock_flow', ['source_no'], unique=False)
-    op.create_index(op.f('ix_inv_stock_flow_biz_time'), 'inv_stock_flow', ['biz_time'], unique=False)
+    # 还原inv_stock和inv_stock_flow的修改（索引操作同样先判断存在性，避免重复报错）
+    if _index_exists(conn, "inv_stock_flow", "ix_inv_stock_flow_tenant_id"):
+        op.drop_index(op.f('ix_inv_stock_flow_tenant_id'), table_name='inv_stock_flow')
+    if _index_exists(conn, "inv_stock_flow", "idx_flow_warehouse_time"):
+        op.drop_index('idx_flow_warehouse_time', table_name='inv_stock_flow')
+    if _index_exists(conn, "inv_stock_flow", "idx_flow_source_no"):
+        op.drop_index('idx_flow_source_no', table_name='inv_stock_flow')
+    if _index_exists(conn, "inv_stock_flow", "idx_flow_goods_time"):
+        op.drop_index('idx_flow_goods_time', table_name='inv_stock_flow')
+    if not _index_exists(conn, "inv_stock_flow", "ix_inv_stock_flow_source_no"):
+        op.create_index(op.f('ix_inv_stock_flow_source_no'), 'inv_stock_flow', ['source_no'], unique=False)
+    if not _index_exists(conn, "inv_stock_flow", "ix_inv_stock_flow_biz_time"):
+        op.create_index(op.f('ix_inv_stock_flow_biz_time'), 'inv_stock_flow', ['biz_time'], unique=False)
     op.alter_column('inv_stock_flow', 'biz_time',
                existing_type=sa.DateTime(timezone=True),
                type_=sa.VARCHAR(length=32),
@@ -997,7 +1032,8 @@ def downgrade() -> None:
                existing_server_default=sa.text("'1'::bigint"))
     op.drop_column('inv_stock_flow', 'operator_id')
     
-    op.drop_index(op.f('ix_inv_stock_tenant_id'), table_name='inv_stock')
+    if _index_exists(conn, "inv_stock", "ix_inv_stock_tenant_id"):
+        op.drop_index(op.f('ix_inv_stock_tenant_id'), table_name='inv_stock')
     # 重新创建被upgrade删除的索引（仅在PostgreSQL中，使用IF NOT EXISTS避免重复）
     if dialect == "postgresql":
         op.execute(

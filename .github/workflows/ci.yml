@@ -148,7 +148,10 @@ jobs:
           before="$(alembic current | awk 'NF {print $1; exit}')"
           test -n "$before"
           test "$before" = "$(alembic heads | awk 'NF {print $1; exit}')"
-          alembic downgrade -1
+          # head 是 merge point（ff36274a4c73 有两个父分支），`downgrade -1` 无法判断
+          # 往哪个方向回退，会报 "Ambiguous walk"，必须显式指定回退到的分支点。
+          # 该分支点随迁移链变化，修改迁移链时需同步更新此版本号。
+          alembic downgrade a7b3d9e1f5c4
           after_downgrade="$(alembic current | awk 'NF {print $1; exit}')"
           test -n "$after_downgrade"
           test "$after_downgrade" != "$before"

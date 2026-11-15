@@ -27,15 +27,35 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _column_exists(conn: sa.Connection, table: str, column: str) -> bool:
+    """判断表上是否已有该列。
+
+    迁移链上 7f496af09f7f 已经把同样三列加过一遍，干净库升级到这里时列已存在，
+    无条件 add_column 会抛 DuplicateColumnError，因此列操作必须幂等。
+    """
+    inspector = sa.inspect(conn)
+    if not inspector.has_table(table):
+        return False
+    return column in {col["name"] for col in inspector.get_columns(table)}
+
+
 def upgrade() -> None:
-    """按模型口径补齐三列（全部可空，无需回填）。"""
-    op.add_column("inv_stock", sa.Column("first_in_date", sa.Date(), nullable=True))
-    op.add_column("inv_stock", sa.Column("last_out_date", sa.Date(), nullable=True))
-    op.add_column("inv_stock_flow", sa.Column("operator_id", sa.BigInteger(), nullable=True))
+    """按模型口径补齐三列（全部可空，无需回填）；已存在则跳过。"""
+    conn = op.get_bind()
+    if not _column_exists(conn, "inv_stock", "first_in_date"):
+        op.add_column("inv_stock", sa.Column("first_in_date", sa.Date(), nullable=True))
+    if not _column_exists(conn, "inv_stock", "last_out_date"):
+        op.add_column("inv_stock", sa.Column("last_out_date", sa.Date(), nullable=True))
+    if not _column_exists(conn, "inv_stock_flow", "operator_id"):
+        op.add_column("inv_stock_flow", sa.Column("operator_id", sa.BigInteger(), nullable=True))
 
 
 def downgrade() -> None:
-    """回滚：删除三列（历史数据一并丢弃，仅开发环境回滚用）。"""
-    op.drop_column("inv_stock_flow", "operator_id")
-    op.drop_column("inv_stock", "last_out_date")
-    op.drop_column("inv_stock", "first_in_date")
+    """回滚：删除三列（历史数据一并丢弃，仅开发环境回滚用）；不存在则跳过。"""
+    conn = op.get_bind()
+    if _column_exists(conn, "inv_stock_flow", "operator_id"):
+        op.drop_column("inv_stock_flow", "operator_id")
+    if _column_exists(conn, "inv_stock", "last_out_date"):
+        op.drop_column("inv_stock", "last_out_date")
+    if _column_exists(conn, "inv_stock", "first_in_date"):
+        op.drop_column("inv_stock", "first_in_date")
