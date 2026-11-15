@@ -269,16 +269,12 @@ class UnitRepository(BaseRepository[BdUnit]):
         return list((await self.db.execute(stmt.order_by(BdUnit.id))).scalars().all())
 
     async def list_selectable(self) -> list[BdUnit]:
-        """返回启用状态的计量单位；停用单位不会出现在新单据的可选列表中。
+        """返回可选计量单位。
 
-        重写父类方法以添加特定的排序逻辑（按编码升序）。
+        计量单位按《数据库表设计.md》5.2 没有启停状态，因此不像父类那样按
+        status 过滤，只排除已删除的记录并按 ID 升序返回。
         """
-        stmt = (
-            select(BdUnit)
-            .where(BdUnit.is_deleted.is_(False))
-            .where(BdUnit.status == 1)
-            .order_by(BdUnit.id.asc())
-        )
+        stmt = select(BdUnit).where(BdUnit.is_deleted.is_(False)).order_by(BdUnit.id.asc())
         stmt = self._apply_tenant_filter(stmt)
         return list((await self.db.execute(stmt)).scalars().all())
 
