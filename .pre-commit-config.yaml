@@ -72,6 +72,17 @@ repos:
           - --enable=E
           # 报告里不显示评分，避免「10.00/10」这类噪音
           - --score=n
+        # pylint 钩子跑在自己的隔离虚拟环境里，没有项目依赖时会误报
+        # E0401 import-error（sqlalchemy / alembic 都找不到），这里补齐被检查文件
+        # 最常导入的几个包，保证错误级检查反映真实情况。
+        additional_dependencies:
+          - "sqlalchemy[asyncio]>=2.0.30"
+          - "alembic>=1.13"
+          - "fastapi>=0.110"
+          - "pydantic>=2.6"
+          - "asyncpg>=0.29"
+          - "aiosqlite>=0.20"
+          - "redis>=5.0"
         # 只检查本次改动的文件，且排除迁移目录
         exclude: ^backend/alembic/
         types_or: [python, pyi]
