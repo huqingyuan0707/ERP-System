@@ -39,6 +39,8 @@ class AuditContext:
     params: dict[str, Any] = field(default_factory=dict)
     tenant_id: int | None = None
     operator_id: int | None = None
+    # 业务 Service 已写操作日志时为 True，中间件据此避免重复记录
+    logged: bool = False
 
 
 _context: ContextVar[AuditContext | None] = ContextVar("audit_context", default=None)
@@ -94,6 +96,8 @@ async def write_oper_log(
             status=status,
         )
     )
+    if context is not None:
+        context.logged = True
 
 
 class AuditMiddleware(BaseHTTPMiddleware):
@@ -121,22 +125,31 @@ class AuditMiddleware(BaseHTTPMiddleware):
             try:
                 response = await call_next(request)
             except Exception:
-                await self._record_failure(context, 500)
+                await self._record(context, status=0, result="HTTP 500")
                 raise
             if response.status_code >= 400:
-                await self._record_failure(context, response.status_code)
+                await self._record(context, status=0, result=f"HTTP {response.status_code}")
+            elif self._tracked(context) and not context.logged:
+                # 系统参数/字典/角色/权限等 Service 未写业务日志，由中间件补记成功日志。
+                await self._record(context, status=1, result="success")
             return response
         finally:
             _context.reset(token)
 
     @staticmethod
-    async def _record_failure(context: AuditContext, status_code: int) -> None:
+    def _tracked(context: AuditContext) -> bool:
+        """只自动补记基础资料与系统管理；其它模块 Service 已自带日志。"""
         is_operation = context.method in {"POST", "PUT", "PATCH", "DELETE"} or context.url.endswith(
             "/export"
         )
-        if not is_operation or "/base/" not in context.url:
-            return
-        if context.tenant_id is None or context.operator_id is None:
+        if not is_operation or not any(p in context.url for p in ("/base/", "/sys/")):
+            return False
+        return context.tenant_id is not None and context.operator_id is not None
+
+    @classmethod
+    async def _record(cls, context: AuditContext, *, status: int, result: str) -> None:
+        """业务事务结束后用独立 session 落库，成功/失败都留痕。"""
+        if not cls._tracked(context):
             return
         try:
             from app.db.session import AsyncSessionLocal
@@ -147,9 +160,10 @@ class AuditMiddleware(BaseHTTPMiddleware):
                     tenant_id=context.tenant_id,
                     operator_id=context.operator_id,
                     action=f"{context.method} {context.url}"[:64],
-                    status=0,
-                    result=f"HTTP {status_code}",
+                    module="系统管理" if "/sys/" in context.url else "基础资料",
+                    status=status,
+                    result=result,
                 )
                 await db.commit()
         except Exception:
-            logger.exception("写入失败操作日志失败：%s %s", context.method, context.url)
+            logger.exception("写入操作日志失败：%s %s", context.method, context.url)
