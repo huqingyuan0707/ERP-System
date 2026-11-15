@@ -116,6 +116,9 @@ class ExcelExportService:
             )
             await self.db.commit()
         task = await self.tasks.get_by_task_id(task_id)
+        if task is None:
+            # 任务在执行期间被清理掉时不能继续读属性，直接按不存在返回
+            raise AppException(ErrorCode.NOT_FOUND, "任务不存在")
         return TaskOut.model_validate(task).model_copy(
             update={
                 "can_download": task.status == 3 and bool(task.file_path),
