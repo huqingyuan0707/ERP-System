@@ -58,6 +58,18 @@ async def _initialize_test_database() -> None:
         spec = importlib.util.spec_from_file_location("test_seed_definitions", migration_path)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        # SA-01：报价单号规则在后续迁移 e2f4a6b8c0d2 里，同样按数据定义复用
+        quotation_migration_path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "e2f4a6b8c0d2_sa01_sal_quotation_seeds.py"
+        )
+        quotation_spec = importlib.util.spec_from_file_location(
+            "test_seed_definitions_sa01", quotation_migration_path
+        )
+        quotation_module = importlib.util.module_from_spec(quotation_spec)
+        quotation_spec.loader.exec_module(quotation_module)
         session.add_all(
             [SysDictType(code=code, name=name, status=1) for code, name in module._DICT_TYPES]
         )
@@ -68,7 +80,10 @@ async def _initialize_test_database() -> None:
             ]
         )
         session.add_all(
-            [SysConfig(key=key, value=value, name=name) for key, value, name in module._CONFIGS]
+            [
+                SysConfig(key=key, value=value, name=name)
+                for key, value, name in [*module._CONFIGS, *quotation_module._CONFIGS]
+            ]
         )
         await session.commit()
     await engine.dispose()

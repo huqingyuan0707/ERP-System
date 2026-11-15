@@ -387,6 +387,57 @@ def test_inventory_http_requires_key_and_scopes_it_to_tenant_not_user():
 
             assert await db.scalar(select(func.count()).select_from(InvStockFlow)) == 1
             key = await db.scalar(select(IdempotencyKey))
-            assert key.user_id == 0
+            # 双轨口径：幂等键作用域是租户级（重放返回首次结果），
+            # 但记录里的 user_id 必须是真实发起人（首次提交的用户 11），不再是硬编码 0。
+            assert key.user_id == 11
+
+
+
+def test_idempotency_record_stores_real_operator_not_zero():
+    """回归：幂等记录必须归属真实操作人（原实现硬编码 user_id=0）。
+
+    双轨口径下：
+      - 幂等键作用域仍是租户级（不同用户同 key 视为同一请求，重放返回首次结果）；
+      - 但 idem_idempotency_key.user_id 要落真实发起人，供审计追溯。
+    """
+
+    async def scenario():
+        async with memory_db() as db:
+            service = IdempotencyService(db)
+            executed: list[str] = []
+
+            async def operation() -> dict:
+                executed.append("run")
+                return {"ok": True}
+
+            await service.execute(
+                tenant_id=1,
+                user_id=11,  # 真实操作人
+                biz_type="change_stock",
+                idempotency_key="same-key",
+                request_body={"qty": 1},
+                operation=operation,
+            )
+
+            # 另一个用户用同一个幂等键重放：不再执行业务，直接返回首次结果
+            result = await service.execute(
+                tenant_id=1,
+                user_id=12,
+                biz_type="change_stock",
+                idempotency_key="same-key",
+                request_body={"qty": 1},
+                operation=operation,
+            )
+            assert result == {"ok": True}
+            assert executed == ["run"]  # 只真正执行了一次
+
+            record = await db.scalar(select(IdempotencyKey))
+            # 关键断言：记录归属首次真实操作人，而非 0
+            assert record.user_id == 11
+            assert record.tenant_id == 1
+            # 幂等键不含 user_id，保证租户级作用域
+            assert record.key == "idem:change_stock:1:same-key"
+
+    asyncio.run(scenario())
 
     asyncio.run(scenario())

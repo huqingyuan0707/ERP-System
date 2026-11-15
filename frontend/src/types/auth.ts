@@ -33,6 +33,8 @@ export interface CurrentUser {
   username: string
   realName: string | null
   tenantId?: number
+  /** 所属部门：新建单据时用于「部门默认当前用户」预填（后端 /auth/me 下发）。 */
+  deptId?: number | null
   roles: string[]
   permissions: string[]
   menus: MenuNode[]

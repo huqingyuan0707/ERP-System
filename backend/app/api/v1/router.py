@@ -8,12 +8,18 @@ from app.api.v1.endpoints import (
     auth,
     configs,
     customer,
-    dashboard,
+    dept,
     dicts,
+    employee,
     export,
     goods,
     inventory,
     log,
+    purchase_apply,
+    purchase_inbound,
+    purchase_order,
+    purchase_return,
+    sal_quotation,
     supplier,
     system,
     task,
@@ -81,7 +87,6 @@ api_router.include_router(auth.router)
 api_router.include_router(system.router)
 api_router.include_router(dicts.router)
 api_router.include_router(configs.router)
-api_router.include_router(dashboard.router)
 # 导入导出包含 /base/goods/export、/base/goods/import 等静态路径，
 # 必须先于 goods.router 注册，否则会被 /base/goods/{goods_id} 当作动态参数匹配（422）
 api_router.include_router(export.router)
@@ -92,3 +97,16 @@ api_router.include_router(warehouse.router)
 api_router.include_router(inventory.router)
 api_router.include_router(supplier.router)
 api_router.include_router(customer.router)
+# B-06：/base/depts/sort、/base/employees/options 等静态路径均在各自模块内先于 /{id} 注册
+api_router.include_router(dept.router)
+api_router.include_router(employee.router)
+# P-01：采购申请 /purchase/applies；列表与新增为静态路径，先于 /{apply_id} 注册
+api_router.include_router(purchase_apply.router)
+# P-02：采购订单 /purchase/orders；/orders/from-apply/{apply_id} 为静态段，先于 /orders/{order_id}
+api_router.include_router(purchase_order.router)
+# P-03：采购入库 /purchase/inbounds；/inbounds/from-order/{order_id} 为静态段，先于 /{inbound_id}
+api_router.include_router(purchase_inbound.router)
+# P-04：采购退货 /purchase/returns；/returns/source 为静态段，先于 /{return_id}
+api_router.include_router(purchase_return.router)
+# SA-01：销售报价 /sales/quotations；列表与新增为静态路径，先于 /{quotation_id} 注册
+api_router.include_router(sal_quotation.router)

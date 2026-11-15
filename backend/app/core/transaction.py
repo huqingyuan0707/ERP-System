@@ -1,8 +1,9 @@
 """事务管理工具：提供事务上下文管理器和装饰器。"""
 
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from functools import wraps
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 

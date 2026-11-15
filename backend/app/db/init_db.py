@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.security import hash_password
+from app.db.goods_seed import GOODS_SEED_TEMPLATE
 from app.db.session import AsyncSessionLocal, engine
 from app.models.base_data import BdGoods, BdGoodsCategory, BdUnit, BdWarehouse
 from app.models.sys import (
@@ -114,8 +115,10 @@ async def init_db() -> None:
 async def _seed(session: AsyncSession) -> None:
     exists = await session.scalar(select(func.count()).select_from(SysUser))
     if exists:
-        # 已有数据库不重复写入基础数据，只补齐后续新增的权限项，保证按钮权限可用
+        # 已有数据库不重复写入基础数据，只补齐后续新增的权限项与演示商品，
+        # 保证按钮权限可用、商品列表具备足够数据量
         await _ensure_permissions(session)
+        await _seed_extra_goods(session)
         await session.commit()
         return
 
@@ -212,9 +215,19 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     warehouse_menu = next(menu for menu in menus if menu.perm_code == "base:warehouse:list")
     supplier_menu = next(menu for menu in menus if menu.perm_code == "base:supplier:list")
     customer_menu = next(menu for menu in menus if menu.perm_code == "base:customer:list")
+    employee_menu = next(menu for menu in menus if menu.perm_code == "base:employee:list")
     stock_menu = next(menu for menu in menus if menu.perm_code == "inv:stock:list")
     statement_menu = next(menu for menu in menus if menu.perm_code == "fin:statement:list")
     report_menu = next(menu for menu in menus if menu.perm_code == "rpt:finance:list")
+    # P-01 采购申请：按钮权限挂在「采购申请」菜单下（菜单本身已在上面种子里定义）
+    apply_menu = next(menu for menu in menus if menu.perm_code == "pur:apply:list")
+    # P-02 采购订单：按钮权限挂在「采购订单」菜单下
+    order_menu = next(menu for menu in menus if menu.perm_code == "pur:order:list")
+    # P-03 采购入库 / P-04 采购退货：按钮权限挂在各自菜单下
+    inbound_menu = next(menu for menu in menus if menu.perm_code == "pur:inbound:list")
+    return_menu = next(menu for menu in menus if menu.perm_code == "pur:return:list")
+    # SA-01 销售报价：按钮权限挂在「销售报价」菜单下
+    quotation_menu = next(menu for menu in menus if menu.perm_code == "sal:quotation:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -241,11 +254,45 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("新增客户", "base:customer:add", customer_menu.id, 1),
         _button("修改客户", "base:customer:edit", customer_menu.id, 2),
         _button("删除客户", "base:customer:delete", customer_menu.id, 3),
+        _button("部门查看", "base:dept:list", employee_menu.id, 8),
+        _button("新增部门", "base:dept:add", employee_menu.id, 9),
+        _button("修改部门", "base:dept:edit", employee_menu.id, 10),
+        _button("删除部门", "base:dept:delete", employee_menu.id, 11),
+        _button("新增员工", "base:employee:add", employee_menu.id, 1),
+        _button("修改员工", "base:employee:edit", employee_menu.id, 2),
+        _button("删除员工", "base:employee:delete", employee_menu.id, 3),
         _button("导出库存", "inv:stock:export", stock_menu.id, 6),
         _button("导出通用报表", "report:export", report_menu.id, 5),
         _button("导出对账单", "fin:statement:export", statement_menu.id, 7),
         _button("查看操作日志", "sys:log:view", user_menu.id, 6),
         _button("查看异步任务", "sys:task:view", user_menu.id, 7),
+        # P-01 采购申请：新增/修改/提交/审核（查看权限复用菜单上的 pur:apply:list）
+        _button("新增采购申请", "pur:apply:add", apply_menu.id, 1),
+        _button("修改采购申请", "pur:apply:edit", apply_menu.id, 2),
+        _button("提交采购申请", "pur:apply:submit", apply_menu.id, 3),
+        _button("审核采购申请", "pur:apply:audit", apply_menu.id, 4),
+        _button("删除采购申请", "pur:apply:delete", apply_menu.id, 5),
+        # P-02 采购订单：新增/修改/提交/审核/关闭（查看权限复用菜单上的 pur:order:list）
+        _button("新增采购订单", "pur:order:add", order_menu.id, 1),
+        _button("修改采购订单", "pur:order:edit", order_menu.id, 2),
+        _button("提交采购订单", "pur:order:submit", order_menu.id, 3),
+        _button("审核采购订单", "pur:order:audit", order_menu.id, 4),
+        _button("关闭采购订单", "pur:order:close", order_menu.id, 5),
+        # P-03 采购入库：新增/修改/确认/删除（查看权限复用菜单上的 pur:inbound:list）
+        _button("新增采购入库", "pur:inbound:add", inbound_menu.id, 1),
+        _button("修改采购入库", "pur:inbound:edit", inbound_menu.id, 2),
+        _button("确认采购入库", "pur:inbound:confirm", inbound_menu.id, 3),
+        _button("删除采购入库", "pur:inbound:delete", inbound_menu.id, 4),
+        # P-04 采购退货：新增/修改/确认/删除（查看权限复用菜单上的 pur:return:list）
+        _button("新增采购退货", "pur:return:add", return_menu.id, 1),
+        _button("修改采购退货", "pur:return:edit", return_menu.id, 2),
+        _button("确认采购退货", "pur:return:confirm", return_menu.id, 3),
+        _button("删除采购退货", "pur:return:delete", return_menu.id, 4),
+        # SA-01 销售报价：新增/修改/删除（查看权限复用菜单上的 sal:quotation:list，
+        # 发送/作废属于状态变更，归入 edit，需求条目只定义 view/add/edit/delete 四个码）
+        _button("新增销售报价", "sal:quotation:add", quotation_menu.id, 1),
+        _button("修改销售报价", "sal:quotation:edit", quotation_menu.id, 2),
+        _button("删除销售报价", "sal:quotation:delete", quotation_menu.id, 3),
         _button("超级权限", "*", dir_sys.id, 99),
     ]
     session.add_all(buttons)
@@ -413,6 +460,70 @@ async def _seed_base_data(session: AsyncSession) -> None:
         ]
     )
     await session.flush()
+
+
+async def _seed_extra_goods(session: AsyncSession) -> None:
+    """幂等补齐 88 条演示商品（GD0007~GD0094）。
+
+    设计说明：
+      - 仅在「已有库」分支调用（见 _seed），保证老库重启即可补齐，无需重建数据库；
+      - 按 code 判重，重复执行不会产生重复编码（uq_goods_code_tenant 兜底）；
+      - 分类/单位复用 _seed_base_data 中的「电子产品」「办公用品」与「个/台/箱」，
+        不新增基础资料，避免外键异常；
+      - status 全部为 1（启用），保证 GET /base/goods?status=1 能查到全部商品；
+      - 价格与库存上下限满足既有约束：sale_price > cost_price > 0，
+        stock_upper > stock_lower > 0；
+      - bd_goods 无供应商字段，商品不关联供应商（供应商仅挂在采购订单上）。
+    """
+    category_id_by_name = {
+        row.name: int(row.id)
+        for row in (await session.execute(select(BdGoodsCategory.id, BdGoodsCategory.name))).all()
+    }
+    unit_id_by_name = {
+        row.name: int(row.id)
+        for row in (await session.execute(select(BdUnit.id, BdUnit.name))).all()
+    }
+
+    # 判重：一次性取出本批编码，避免逐条查询（N+1）
+    target_codes = [f"GD{index:04d}" for index in range(7, 7 + len(GOODS_SEED_TEMPLATE))]
+    existing_codes = set(
+        (await session.execute(select(BdGoods.code).where(BdGoods.code.in_(target_codes))))
+        .scalars()
+        .all()
+    )
+
+    goods: list[BdGoods] = []
+    for offset, (name, spec, category_name, unit_name, cost, sale, lower, upper) in enumerate(
+        GOODS_SEED_TEMPLATE
+    ):
+        code = f"GD{offset + 7:04d}"
+        if code in existing_codes:
+            # 已存在则跳过，保证重复执行幂等
+            continue
+        category_id = category_id_by_name.get(category_name)
+        unit_id = unit_id_by_name.get(unit_name)
+        if category_id is None or unit_id is None:
+            # 缺基础资料时整批跳过，避免写入孤立外键
+            return
+        goods.append(
+            BdGoods(
+                code=code,
+                name=name,
+                spec=spec,
+                category_id=category_id,
+                unit_id=unit_id,
+                # 条码从既有种子最后一个 6901234567896 起递增，保证租户内唯一
+                barcode=f"69012345679{offset + 6:02d}",
+                cost_price=cost,
+                sale_price=sale,
+                stock_lower=lower,
+                stock_upper=upper,
+                status=1,
+            )
+        )
+    if goods:
+        session.add_all(goods)
+        await session.flush()
 
 
 async def _ensure_permissions(session: AsyncSession) -> None:
@@ -610,4 +721,165 @@ async def _ensure_permissions(session: AsyncSession) -> None:
             for permission in export_permissions:
                 if (role_id, permission.id) not in existing_grants:
                     session.add(SysRolePermission(role_id=role_id, permission_id=permission.id))
+    await session.flush()
+
+    # B-06 员工/部门按钮权限：已初始化的数据库补齐，并授权给每个租户的 admin
+    employee_menu_id = await session.scalar(
+        select(SysPermission.id).where(SysPermission.perm_code == "base:employee:list")
+    )
+    b06_specs = (
+        ("部门查看", "base:dept:list", 8),
+        ("新增部门", "base:dept:add", 9),
+        ("修改部门", "base:dept:edit", 10),
+        ("删除部门", "base:dept:delete", 11),
+        ("新增员工", "base:employee:add", 1),
+        ("修改员工", "base:employee:edit", 2),
+        ("删除员工", "base:employee:delete", 3),
+    )
+    b06_permissions: list[SysPermission] = []
+    for name, perm_code, sort in b06_specs:
+        permission = await session.scalar(
+            select(SysPermission).where(SysPermission.perm_code == perm_code)
+        )
+        if permission is None:
+            permission = SysPermission(
+                name=name,
+                type=3,
+                perm_code=perm_code,
+                parent_id=employee_menu_id,
+                sort=sort,
+            )
+            session.add(permission)
+            await session.flush()
+        b06_permissions.append(permission)
+
+    for admin_role in admin_roles:
+        for permission in b06_permissions:
+            granted = await session.scalar(
+                select(SysRolePermission.role_id).where(
+                    SysRolePermission.role_id == admin_role.id,
+                    SysRolePermission.permission_id == permission.id,
+                )
+            )
+            if granted is None:
+                session.add(
+                    SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
+                )
+    await session.flush()
+
+    # P-01 / P-02 采购按钮权限：菜单首次初始化时已播种，
+    # 老库只需补齐缺失按钮，并授权给各租户的 admin 角色（幂等，不重复插入）。
+    procurement_specs: tuple[tuple[str, tuple[tuple[str, str, int], ...]], ...] = (
+        (
+            "pur:apply:list",
+            (
+                ("新增采购申请", "pur:apply:add", 1),
+                ("修改采购申请", "pur:apply:edit", 2),
+                ("提交采购申请", "pur:apply:submit", 3),
+                ("审核采购申请", "pur:apply:audit", 4),
+                ("删除采购申请", "pur:apply:delete", 5),
+            ),
+        ),
+        (
+            "pur:order:list",
+            (
+                ("新增采购订单", "pur:order:add", 1),
+                ("修改采购订单", "pur:order:edit", 2),
+                ("提交采购订单", "pur:order:submit", 3),
+                ("审核采购订单", "pur:order:audit", 4),
+                ("关闭采购订单", "pur:order:close", 5),
+            ),
+        ),
+        # P-03 采购入库 / P-04 采购退货：老库补齐按钮并授权 admin（幂等）
+        (
+            "pur:inbound:list",
+            (
+                ("新增采购入库", "pur:inbound:add", 1),
+                ("修改采购入库", "pur:inbound:edit", 2),
+                ("确认采购入库", "pur:inbound:confirm", 3),
+                ("删除采购入库", "pur:inbound:delete", 4),
+            ),
+        ),
+        (
+            "pur:return:list",
+            (
+                ("新增采购退货", "pur:return:add", 1),
+                ("修改采购退货", "pur:return:edit", 2),
+                ("确认采购退货", "pur:return:confirm", 3),
+                ("删除采购退货", "pur:return:delete", 4),
+            ),
+        ),
+    )
+    for menu_code, button_specs in procurement_specs:
+        menu_id = await session.scalar(
+            select(SysPermission.id).where(SysPermission.perm_code == menu_code)
+        )
+        if menu_id is None:
+            # 菜单不存在则跳过：菜单树由种子/迁移维护，此处只补按钮
+            continue
+        menu_permissions: list[SysPermission] = []
+        for name, perm_code, sort in button_specs:
+            permission = await session.scalar(
+                select(SysPermission).where(SysPermission.perm_code == perm_code)
+            )
+            if permission is None:
+                permission = SysPermission(
+                    name=name, type=3, perm_code=perm_code, parent_id=menu_id, sort=sort
+                )
+                session.add(permission)
+                await session.flush()
+            menu_permissions.append(permission)
+
+        for admin_role in admin_roles:
+            for permission in menu_permissions:
+                granted = await session.scalar(
+                    select(SysRolePermission.role_id).where(
+                        SysRolePermission.role_id == admin_role.id,
+                        SysRolePermission.permission_id == permission.id,
+                    )
+                )
+                if granted is None:
+                    session.add(
+                        SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
+                    )
+    await session.flush()
+
+    # SA-01 销售报价按钮权限：老库补齐按钮并授权 admin（幂等，与迁移 e2f4a6b8c0d2 同口径）
+    quotation_menu_id = await session.scalar(
+        select(SysPermission.id).where(SysPermission.perm_code == "sal:quotation:list")
+    )
+    if quotation_menu_id is not None:
+        quotation_specs: tuple[tuple[str, str, int], ...] = (
+            ("新增销售报价", "sal:quotation:add", 1),
+            ("修改销售报价", "sal:quotation:edit", 2),
+            ("删除销售报价", "sal:quotation:delete", 3),
+        )
+        quotation_permissions: list[SysPermission] = []
+        for name, perm_code, sort in quotation_specs:
+            permission = await session.scalar(
+                select(SysPermission).where(SysPermission.perm_code == perm_code)
+            )
+            if permission is None:
+                permission = SysPermission(
+                    name=name,
+                    type=3,
+                    perm_code=perm_code,
+                    parent_id=quotation_menu_id,
+                    sort=sort,
+                )
+                session.add(permission)
+                await session.flush()
+            quotation_permissions.append(permission)
+        for admin_role in admin_roles:
+            for permission in quotation_permissions:
+                granted = await session.scalar(
+                    select(SysRolePermission.role_id).where(
+                        SysRolePermission.role_id == admin_role.id,
+                        SysRolePermission.permission_id == permission.id,
+                    )
+                )
+                if granted is None:
+                    session.add(
+                        SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
+                    )
     await session.flush()

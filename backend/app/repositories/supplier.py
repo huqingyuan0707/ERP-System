@@ -165,7 +165,9 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
             "AND tenant_id = :tenant_id "
             f"AND status NOT IN ({closed}) LIMIT 1"
         )
-        result = await self.db.execute(stmt, {"supplier_id": supplier_id, "tenant_id": self.tenant_id})
+        result = await self.db.execute(
+            stmt, {"supplier_id": supplier_id, "tenant_id": self.tenant_id}
+        )
         return result.first() is not None  # 有记录返回 True。
 
     async def has_inbound(self, supplier_id: int) -> bool:  # 判断是否已有历史入库单。
@@ -185,7 +187,9 @@ class SupplierRepository(BaseRepository[BdSupplier]):  # 将通用仓储绑定�
             "AND is_deleted IS NOT TRUE "
             "AND tenant_id = :tenant_id LIMIT 1"
         )
-        result = await self.db.execute(stmt, {"supplier_id": supplier_id, "tenant_id": self.tenant_id})
+        result = await self.db.execute(
+            stmt, {"supplier_id": supplier_id, "tenant_id": self.tenant_id}
+        )
         return result.first() is not None
 
     async def has_payable(self, supplier_id: int) -> bool:  # 判断是否存在应付记录。

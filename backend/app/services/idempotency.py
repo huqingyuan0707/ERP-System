@@ -108,8 +108,19 @@ class IdempotencyService:
         biz_type: str,
         idempotency_key: str,
     ) -> str:
-        """构造幂等键字符串：idem:{biz_type}:{tenant_id}:{user_id}:{idempotency_key}。"""
-        return f"idem:{biz_type}:{tenant_id}:{user_id}:{idempotency_key}"
+        """构造幂等键字符串：``idem:{biz_type}:{tenant_id}:{idempotency_key}``。
+
+        设计口径（租户级幂等作用域）：
+          - 作用域为「租户 + 业务类型 + 客户端幂等键」，**刻意不含 user_id**：
+            同一租户下不同操作人使用同一个 Idempotency-Key 视为同一笔业务请求，
+            重放时返回首次结果或冲突，避免同一笔单据被重复提交；
+          - 但 ``idem_idempotency_key.user_id`` 仍写入真实操作人，
+            用于审计追溯“到底是谁首次发起了这笔请求”。
+
+        保留 user_id 形参是为了兼容既有调用点与测试；它不参与 key 拼装，
+        因此不会因操作人不同而产生不同的幂等键。
+        """
+        return f"idem:{biz_type}:{tenant_id}:{idempotency_key}"
 
     @staticmethod
     def hash_body(body: Any) -> str:
