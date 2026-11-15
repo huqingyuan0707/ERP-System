@@ -110,13 +110,17 @@ def _preflight(conn: sa.Connection) -> None:
 
     # PostgreSQL 检查视图依赖
     if dialect == "postgresql":
-        tables_str = "', '".join(existing_tables)
+        # 每个旧表名一个 LIKE 条件，用 OR 连接；模式值走绑定参数，避免字符串拼接
+        patterns = [f"%{table_name}%" for table_name in sorted(existing_tables)]
+        params = {f"p{index}": pattern for index, pattern in enumerate(patterns)}
+        conditions = " OR ".join(f"definition LIKE :p{index}" for index in range(len(patterns)))
         result = conn.execute(
             sa.text(
-                f"SELECT viewname FROM pg_views "
-                f"WHERE schemaname = current_schema() "
-                f"AND definition LIKE '%{tables_str}%'"
-            )
+                "SELECT viewname FROM pg_views "
+                "WHERE schemaname = current_schema() "
+                f"AND ({conditions})"
+            ),
+            params,
         )
         views = [row[0] for row in result]
         if views:
