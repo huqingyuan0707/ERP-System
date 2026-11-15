@@ -508,7 +508,9 @@ async def _scope_scenario() -> None:
 
             # 关键字按客户名称可命中（创建人本人查询）
             resp = await client.get(
-                f"{API}/sales/quotations", headers=headers_a, params={"keyword": f"SA01范围客户{suffix}"}
+                f"{API}/sales/quotations",
+                headers=headers_a,
+                params={"keyword": f"SA01范围客户{suffix}"},
             )
             assert resp.status_code == 200, resp.text
             assert resp.json()["data"]["total"] == 1, "按客户名称关键字应命中"
