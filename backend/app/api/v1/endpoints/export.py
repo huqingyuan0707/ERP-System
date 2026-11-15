@@ -19,7 +19,7 @@ from app.core.exceptions import AppException, ErrorCode
 from app.models.sys import SysUser
 from app.schemas.common import ApiResponse, success_response
 from app.schemas.goods import GoodsImportResult, GoodsQuery
-from app.schemas.task import TaskOut
+from app.schemas.task import ReportExportQuery, StockExportQuery, TaskOut
 from app.services.auth import AuthService
 from app.services.excel_export import EXPORT_DIR, ExcelExportService
 from app.services.task import TaskService
@@ -81,14 +81,16 @@ async def export_stocks(
     current_user: CurrentUserDep,
     tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm(EXPORT_STOCK_PERM))],
-    warehouse_id: int | None = Query(default=None),
-    keyword: str | None = Query(default=None),
+    query: Annotated[StockExportQuery, Query()],
 ) -> ApiResponse[TaskOut]:
-    """库存导出：提交异步任务，返回 taskId。"""
+    """库存导出：提交异步任务，返回 taskId。
+
+    用 Query 模型接收 warehouseId，确保导出与列表走同一套仓库筛选。
+    """
     task = await ExcelExportService(db, tenant_id).export_stocks(
         created_by=current_user.id,
-        warehouse_id=warehouse_id,
-        keyword=keyword,
+        warehouse_id=query.warehouse_id,
+        keyword=query.keyword,
     )
     return success_response(task)
 
@@ -99,12 +101,12 @@ async def export_report(
     current_user: CurrentUserDep,
     tenant_id: TenantDep,
     _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))],
-    report_type: str = Query(..., description="报表类型 purchase/sales/inventory/finance"),
+    query: Annotated[ReportExportQuery, Query()],
 ) -> ApiResponse[TaskOut]:
     """通用报表导出：提交异步任务，返回 taskId。"""
     task = await ExcelExportService(db, tenant_id).export_report(
         created_by=current_user.id,
-        report_type=report_type,
+        report_type=query.report_type,
     )
     return success_response(task)
 

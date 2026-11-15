@@ -7,6 +7,30 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.schemas.common import PageQuery, to_camel
 
 
+class StockExportQuery(BaseModel):
+    """库存导出筛选参数（GET /inventory/stocks/export）。
+
+    对外用 camelCase（warehouseId）；populate_by_name 同时兼容旧 snake_case 调用方。
+    """
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    warehouse_id: int | None = Field(default=None, ge=1, description="仓库 ID")
+    keyword: str | None = Field(default=None, description="商品编码/名称/条码")
+
+
+class ReportExportQuery(BaseModel):
+    """通用报表导出参数（POST /reports/export）。"""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    report_type: str = Field(
+        min_length=1,
+        max_length=32,
+        description="报表类型 purchase/sales/inventory/finance",
+    )
+
+
 class TaskQuery(PageQuery):
     """异步任务列表查询参数。"""
 

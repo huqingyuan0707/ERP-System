@@ -48,7 +48,11 @@ export const exportStocks = (params: {
     params,
   })
 
-/** 报表导出：提交异步任务 */
+/**
+ * 报表导出：提交异步任务。
+ * 注意：后端 ExcelExportService.export_report 目前仍是占位实现（返回 400），
+ * 报表数据接入前不要从页面调用；ExportButton 已对这两种类型做前置提示。
+ */
 export const exportReport = (reportType: string): Promise<{
   taskId: string
   taskType: string
@@ -60,7 +64,7 @@ export const exportReport = (reportType: string): Promise<{
     params: { reportType },
   })
 
-/** 对账单导出：提交异步任务 */
+/** 对账单导出：提交异步任务（后端同为占位实现，返回 400）。 */
 export const exportStatement = (statementId: number): Promise<{
   taskId: string
   taskType: string

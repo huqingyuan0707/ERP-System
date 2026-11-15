@@ -63,6 +63,12 @@ onBeforeUnmount(() => {
 
 const submitExport = async (): Promise<void> => {
   if (props.disabled || loading.value || polling.value) return
+  // 报表/对账单导出后端仍是占位实现（会返回 400）。接入真实数据前直接给出
+  // 明确提示，避免用户以为任务已提交后空等轮询。
+  if (props.type === 'report' || props.type === 'statement') {
+    ElMessage.warning('报表/对账单导出尚未接入，请使用对应业务页面的导出功能')
+    return
+  }
   let taskId = ''
   try {
     loading.value = true

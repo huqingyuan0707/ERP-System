@@ -518,7 +518,7 @@ onMounted(() => {
                 </el-button>
                 <el-button
                   v-if="row.status === APPLY_STATUS.DRAFT"
-                  v-perm="'pur:apply:edit'"
+                  v-perm="'pur:apply:delete'"
                   link
                   type="danger"
                   @click="handleDelete(row)"

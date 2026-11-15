@@ -1,5 +1,7 @@
 """任务列表、轮询和下载：owner 不依赖后台任务管理权限。"""
 
+from typing import Annotated
+
 from fastapi import APIRouter, Query
 from fastapi.responses import FileResponse
 
@@ -19,12 +21,9 @@ async def list_tasks(
     db: DbDep,
     current_user: CurrentUserDep,
     tenant_id: TenantDep,
-    task_type: str | None = Query(default=None, description="任务类型"),
-    status: int | None = Query(default=None, ge=1, le=4),
-    page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    query: Annotated[TaskQuery, Query()],
 ) -> ApiResponse[PageResult[TaskOut]]:
-    query = TaskQuery(task_type=task_type, status=status, page=page, page_size=page_size)
+    """任务列表查询：camelCase query（pageSize/taskType），兼容 snake_case。"""
     codes = await AuthService(db).get_permission_codes(current_user.id)
     result = await TaskService(db, tenant_id).list_tasks(
         query, user_id=current_user.id, codes=codes
