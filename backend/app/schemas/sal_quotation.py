@@ -3,8 +3,9 @@ sal_quotation / sal_quotation_item。
 
 状态口径（与 app/models/sal.py 保持一致，禁止裸数字散落业务代码）：
   - 0 草稿：可编辑、可删除、可发送
-  - 1 已发送：不可编辑、不可删除，可作废；已过有效期不能再发送
+  - 1 已发送：不可编辑、不可删除，可作废、可转订单；已过有效期不能再发送
   - 2 已失效：终态，仅作报价留档与「复制为新订单」的取数来源
+  - 3 已转订单：终态（SAL-02 转单回写），同一报价不可重复转单、不可作废
 
 金额口径（.trae 固定规则 §2 / 设计文档 G5）：
   - price / amount 均为含税值，amount = qty * price 后 quantize(0.01)（默认银行家舍入）；
@@ -29,8 +30,9 @@ class SalQuotationStatus:
     """
 
     DRAFT = 0  # 草稿：可编辑、可删除、可发送
-    SENT = 1  # 已发送：不可编辑、不可删除，可作废
+    SENT = 1  # 已发送：不可编辑、不可删除，可作废、可转订单
     INVALID = 2  # 已失效：终态，仅作留档与复制预填订单的取数来源
+    CONVERTED = 3  # 已转订单：终态（SAL-02），同一报价不可重复转单
 
 
 # 状态文案：列表状态列与错误提示共用，避免前端再维护一份映射
@@ -38,6 +40,7 @@ STATUS_TEXTS: dict[int, str] = {
     SalQuotationStatus.DRAFT: "草稿",
     SalQuotationStatus.SENT: "已发送",
     SalQuotationStatus.INVALID: "已失效",
+    SalQuotationStatus.CONVERTED: "已转订单",
 }
 
 
@@ -170,9 +173,9 @@ class SalQuotationOut(BaseModel):
 class SalQuotationQuery(PageQuery):
     """报价单列表查询：支持状态、报价日期区间与关键字（报价号/客户名称）。"""
 
-    # None 表示不按状态筛选；0/1/2 分别对应草稿/已发送/已失效
+    # None 表示不按状态筛选；0/1/2/3 分别对应草稿/已发送/已失效/已转订单
     status: int | None = Field(
-        default=None, ge=SalQuotationStatus.DRAFT, le=SalQuotationStatus.INVALID
+        default=None, ge=SalQuotationStatus.DRAFT, le=SalQuotationStatus.CONVERTED
     )
     # 报价日期区间（含边界），前端传 YYYY-MM-DD
     quote_date_start: date | None = None

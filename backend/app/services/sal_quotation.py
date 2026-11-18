@@ -153,10 +153,7 @@ class SalQuotationService:
             if "valid_until" in data:
                 quotation.valid_until = data["valid_until"]
             # 有效期组合校验用更新后的最终值（Schema 只能拦截两个字段同时传入的场景）
-            if (
-                quotation.valid_until is not None
-                and quotation.valid_until < quotation.quote_date
-            ):
+            if quotation.valid_until is not None and quotation.valid_until < quotation.quote_date:
                 raise AppException(ErrorCode.VALIDATION_ERROR, "报价有效期不能早于报价日期")
             if "remark" in data:
                 # 备注允许显式传 null 表示清空
@@ -165,9 +162,7 @@ class SalQuotationService:
                 # 明细整单替换：旧行软删保留流水，新行插入（ERP 要求留痕，不物理删历史）
                 amounts = await self._load_items(payload.items)
                 await self._replace_items(quotation.id, payload.items, amounts, user.id)
-                quotation.total_amount = sum(
-                    (amount for _, amount in amounts), Decimal("0")
-                )
+                quotation.total_amount = sum((amount for _, amount in amounts), Decimal("0"))
             quotation.updated_by = user.id
             # 乐观锁：条件 UPDATE 抢占版本，前端回传的 version 不一致直接 409
             await bump_version(
@@ -233,9 +228,7 @@ class SalQuotationService:
                 )
             items_map = await self._repo.list_items([int(quotation.id)])
             active_items = [
-                item
-                for item in items_map.get(int(quotation.id), [])
-                if not item.is_deleted
+                item for item in items_map.get(int(quotation.id), []) if not item.is_deleted
             ]
             if not active_items:
                 raise AppException(ErrorCode.VALIDATION_ERROR, "报价单没有明细行，不能发送")
@@ -272,12 +265,14 @@ class SalQuotationService:
     async def void_quotation(
         self, quotation_id: int, user: SysUser, *, commit: bool = True
     ) -> SalQuotationOut:
-        """作废报价：草稿/已发送 → 已失效（终态）；已失效重复作废返回 409。"""
+        """作废报价：草稿/已发送 → 已失效（终态）；已失效/已转订单返回 409。"""
         try:
             ctx = await resolve_scope(self._db, user)
             quotation = await self._get_visible(quotation_id, ctx, for_update=True)
             if quotation.status == SalQuotationStatus.INVALID:
                 raise AppException(ErrorCode.CONFLICT, "报价单已失效，不能重复作废")
+            if quotation.status == SalQuotationStatus.CONVERTED:
+                raise AppException(ErrorCode.CONFLICT, "报价单已转为销售订单，不能作废")
             quotation.status = SalQuotationStatus.INVALID
             quotation.updated_by = user.id
             await bump_version(
@@ -361,9 +356,7 @@ class SalQuotationService:
                 )
             if item.qty <= 0:  # Schema 已拦截，双保险防止绕过入口写入非法数量
                 raise AppException(ErrorCode.VALIDATION_ERROR, "报价数量必须大于 0")
-            amounts.append(
-                (item, (item.qty * item.price).quantize(Decimal("0.01")))
-            )
+            amounts.append((item, (item.qty * item.price).quantize(Decimal("0.01"))))
         return amounts
 
     async def _assert_items_sendable(self, items: list[SalQuotationItem]) -> None:
@@ -439,18 +432,14 @@ class SalQuotationService:
             customer_names = {int(row[0]): str(row[1]) for row in customer_rows}
 
         # 行数直接由已批量查回的明细统计（排除软删行），无需再发 count 查询
-        goods_map, unit_names = (
-            await self._load_goods_info(items_map) if with_items else ({}, {})
-        )
+        goods_map, unit_names = await self._load_goods_info(items_map) if with_items else ({}, {})
 
         result: list[SalQuotationOut] = []
         for row in rows:
             row_items = items_map.get(int(row.id), [])
             active_items = [item for item in row_items if not item.is_deleted]
             item_outs = (
-                self._build_item_outs(active_items, goods_map, unit_names)
-                if with_items
-                else []
+                self._build_item_outs(active_items, goods_map, unit_names) if with_items else []
             )
             result.append(
                 SalQuotationOut.model_validate(row).model_copy(

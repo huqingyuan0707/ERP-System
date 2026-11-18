@@ -228,6 +228,8 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     return_menu = next(menu for menu in menus if menu.perm_code == "pur:return:list")
     # SA-01 销售报价：按钮权限挂在「销售报价」菜单下
     quotation_menu = next(menu for menu in menus if menu.perm_code == "sal:quotation:list")
+    # SAL-02/04~09 销售订单：按钮权限挂在「销售订单」菜单下
+    sal_order_menu = next(menu for menu in menus if menu.perm_code == "sal:order:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -293,6 +295,13 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("新增销售报价", "sal:quotation:add", quotation_menu.id, 1),
         _button("修改销售报价", "sal:quotation:edit", quotation_menu.id, 2),
         _button("删除销售报价", "sal:quotation:delete", quotation_menu.id, 3),
+        # SAL-02/04~09 销售订单：新增/修改/提交/审核/关闭（查看权限复用菜单上的 sal:order:list，
+        # 报价转单属于「创建订单」动作，归入 sal:order:add）
+        _button("新增销售订单", "sal:order:add", sal_order_menu.id, 1),
+        _button("修改销售订单", "sal:order:edit", sal_order_menu.id, 2),
+        _button("提交销售订单", "sal:order:submit", sal_order_menu.id, 3),
+        _button("审核销售订单", "sal:order:audit", sal_order_menu.id, 4),
+        _button("关闭销售订单", "sal:order:close", sal_order_menu.id, 5),
         _button("超级权限", "*", dir_sys.id, 99),
     ]
     session.add_all(buttons)

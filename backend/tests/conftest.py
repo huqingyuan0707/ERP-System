@@ -8,7 +8,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-
 # 在导入应用前覆盖连接配置，绝不从开发 .env 继承测试连接。
 _test_directory = tempfile.TemporaryDirectory(prefix="erp-tests-")
 os.environ["TESTING"] = "1"
@@ -70,6 +69,18 @@ async def _initialize_test_database() -> None:
         )
         quotation_module = importlib.util.module_from_spec(quotation_spec)
         quotation_spec.loader.exec_module(quotation_module)
+        # SAL-02/04~09：销售订单号规则在迁移 b7d2e9f4a6c1 里，同样按数据定义复用
+        sal_order_migration_path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "b7d2e9f4a6c1_sa02_sal_order_seeds.py"
+        )
+        sal_order_spec = importlib.util.spec_from_file_location(
+            "test_seed_definitions_sal_order", sal_order_migration_path
+        )
+        sal_order_module = importlib.util.module_from_spec(sal_order_spec)
+        sal_order_spec.loader.exec_module(sal_order_module)
         session.add_all(
             [SysDictType(code=code, name=name, status=1) for code, name in module._DICT_TYPES]
         )
@@ -79,10 +90,19 @@ async def _initialize_test_database() -> None:
                 for code, label, value, sort in module._DICT_ITEMS
             ]
         )
+        # 多个迁移可能重复补种同一 sys_config 键（如 a5c9d3e7f1b2 基线已含 billno.sal_order，
+        # b7d2e9f4a6c1 再次补种）：按 key 去重、先到先得，与迁移内的 _config_exists 同口径
+        merged_configs: dict[str, tuple[str, str, str]] = {}
+        for key, value, name in [
+            *module._CONFIGS,
+            *quotation_module._CONFIGS,
+            *sal_order_module._CONFIGS,
+        ]:
+            merged_configs.setdefault(key, (key, value, name))
         session.add_all(
             [
                 SysConfig(key=key, value=value, name=name)
-                for key, value, name in [*module._CONFIGS, *quotation_module._CONFIGS]
+                for key, value, name in merged_configs.values()
             ]
         )
         await session.commit()
