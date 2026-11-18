@@ -16,6 +16,7 @@ from app.api.v1.endpoints import (
     goods,
     inventory,
     log,
+    payable,
     purchase_apply,
     purchase_inbound,
     purchase_order,
@@ -112,3 +113,5 @@ api_router.include_router(purchase_inbound.router)
 api_router.include_router(purchase_return.router)
 # SA-01：销售报价 /sales/quotations；列表与新增为静态路径，先于 /{quotation_id} 注册
 api_router.include_router(sal_quotation.router)
+# F-02：应付管理 /finance/payables（只读）；静态 summary/aging 端点先于 /{payable_id} 注册
+api_router.include_router(payable.router)
