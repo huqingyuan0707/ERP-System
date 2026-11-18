@@ -27,7 +27,6 @@ from app.models.sys import (
     SysUserRole,
 )
 
-
 logger = logging.getLogger(__name__)
 
 # backend/alembic.ini（app/db/init_db.py -> backend/）
@@ -98,9 +97,7 @@ def _prepare_schema(connection) -> None:
         )
     _upgrade_to_head(connection)
     if _current_revision(connection) != head:
-        raise RuntimeError(
-            "数据库迁移未达到代码 head；请执行 alembic upgrade head，禁止自动 stamp"
-        )
+        raise RuntimeError("数据库迁移未达到代码 head；请执行 alembic upgrade head，禁止自动 stamp")
     logger.info("空数据库已通过 Alembic 迁移到 head: %s", head)
 
 
@@ -230,6 +227,8 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     quotation_menu = next(menu for menu in menus if menu.perm_code == "sal:quotation:list")
     # SAL-02/04~09 销售订单：按钮权限挂在「销售订单」菜单下
     sal_order_menu = next(menu for menu in menus if menu.perm_code == "sal:order:list")
+    # F-04 付款管理：按钮权限挂在「付款单」菜单下
+    payment_menu = next(menu for menu in menus if menu.perm_code == "fin:payment:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -302,6 +301,12 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("提交销售订单", "sal:order:submit", sal_order_menu.id, 3),
         _button("审核销售订单", "sal:order:audit", sal_order_menu.id, 4),
         _button("关闭销售订单", "sal:order:close", sal_order_menu.id, 5),
+        # F-04 付款管理：新增/修改/核销/删除（查看权限复用菜单上的 fin:payment:list；
+        # 核销是资金操作，单列 writeoff 权限）
+        _button("新增付款", "fin:payment:add", payment_menu.id, 1),
+        _button("修改付款", "fin:payment:edit", payment_menu.id, 2),
+        _button("付款核销", "fin:payment:writeoff", payment_menu.id, 3),
+        _button("删除付款", "fin:payment:delete", payment_menu.id, 4),
         _button("超级权限", "*", dir_sys.id, 99),
     ]
     session.add_all(buttons)
@@ -315,9 +320,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         "base:unit:edit",
         "base:unit:delete",
     ):
-        session.add(
-            SysPermission(name=code, type=3, perm_code=code, parent_id=goods_menu.id)
-        )
+        session.add(SysPermission(name=code, type=3, perm_code=code, parent_id=goods_menu.id))
     await session.flush()
 
     return list((await session.execute(select(SysPermission))).scalars().all())
@@ -328,9 +331,7 @@ def _dir(name: str, route_path: str, icon: str, sort: int) -> SysPermission:
     return SysPermission(name=name, type=1, route_path=route_path, icon=icon, sort=sort)
 
 
-def _menu(
-    name: str, perm_code: str, route_path: str, parent_id: int, sort: int
-) -> SysPermission:
+def _menu(name: str, perm_code: str, route_path: str, parent_id: int, sort: int) -> SysPermission:
     """构造菜单权限，组件路径由路由路径推导（/base/goods → base/goods/index）。"""
     return SysPermission(
         name=name,
@@ -423,28 +424,76 @@ async def _seed_base_data(session: AsyncSession) -> None:
 
     goods_rows = [
         (
-            "GD0001", "无线鼠标", "2.4G黑色", category_electronics.id, unit_piece.id,
-            "6901234567890", 35, 69, 10, 200,
+            "GD0001",
+            "无线鼠标",
+            "2.4G黑色",
+            category_electronics.id,
+            unit_piece.id,
+            "6901234567890",
+            35,
+            69,
+            10,
+            200,
         ),
         (
-            "GD0002", "机械键盘", "87键青轴", category_electronics.id, unit_piece.id,
-            "6901234567891", 120, 239, 5, 100,
+            "GD0002",
+            "机械键盘",
+            "87键青轴",
+            category_electronics.id,
+            unit_piece.id,
+            "6901234567891",
+            120,
+            239,
+            5,
+            100,
         ),
         (
-            "GD0003", "笔记本电脑", "14英寸/i5/16G", category_electronics.id, unit_set.id,
-            "6901234567892", 3800, 4599, 2, 50,
+            "GD0003",
+            "笔记本电脑",
+            "14英寸/i5/16G",
+            category_electronics.id,
+            unit_set.id,
+            "6901234567892",
+            3800,
+            4599,
+            2,
+            50,
         ),
         (
-            "GD0004", "A4打印纸", "70g/500张", category_office.id, unit_box.id,
-            "6901234567893", 18, 32, 20, 500,
+            "GD0004",
+            "A4打印纸",
+            "70g/500张",
+            category_office.id,
+            unit_box.id,
+            "6901234567893",
+            18,
+            32,
+            20,
+            500,
         ),
         (
-            "GD0005", "签字笔", "0.5mm黑色", category_office.id, unit_box.id,
-            "6901234567894", 9.5, 19.9, 50, 1000,
+            "GD0005",
+            "签字笔",
+            "0.5mm黑色",
+            category_office.id,
+            unit_box.id,
+            "6901234567894",
+            9.5,
+            19.9,
+            50,
+            1000,
         ),
         (
-            "GD0006", "文件收纳盒", "尺寸40cm", category_office.id, unit_piece.id,
-            "6901234567895", 12, 25, 10, 200,
+            "GD0006",
+            "文件收纳盒",
+            "尺寸40cm",
+            category_office.id,
+            unit_piece.id,
+            "6901234567895",
+            12,
+            25,
+            10,
+            200,
         ),
     ]
     session.add_all(
@@ -463,8 +512,16 @@ async def _seed_base_data(session: AsyncSession) -> None:
                 status=1,
             )
             for (
-                code, name, spec, category_id, unit_id,
-                barcode, cost_price, sale_price, stock_lower, stock_upper,
+                code,
+                name,
+                spec,
+                category_id,
+                unit_id,
+                barcode,
+                cost_price,
+                sale_price,
+                stock_lower,
+                stock_upper,
             ) in goods_rows
         ]
     )
@@ -771,9 +828,7 @@ async def _ensure_permissions(session: AsyncSession) -> None:
                 )
             )
             if granted is None:
-                session.add(
-                    SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
-                )
+                session.add(SysRolePermission(role_id=admin_role.id, permission_id=permission.id))
     await session.flush()
 
     # P-01 / P-02 采购按钮权限：菜单首次初始化时已播种，
@@ -881,6 +936,47 @@ async def _ensure_permissions(session: AsyncSession) -> None:
             quotation_permissions.append(permission)
         for admin_role in admin_roles:
             for permission in quotation_permissions:
+                granted = await session.scalar(
+                    select(SysRolePermission.role_id).where(
+                        SysRolePermission.role_id == admin_role.id,
+                        SysRolePermission.permission_id == permission.id,
+                    )
+                )
+                if granted is None:
+                    session.add(
+                        SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
+                    )
+    await session.flush()
+
+    # F-04 付款管理按钮权限：老库补齐按钮并授权 admin（幂等，与迁移 f4a6b8c0d2e9 同口径）
+    payment_menu_id = await session.scalar(
+        select(SysPermission.id).where(SysPermission.perm_code == "fin:payment:list")
+    )
+    if payment_menu_id is not None:
+        payment_specs: tuple[tuple[str, str, int], ...] = (
+            ("新增付款", "fin:payment:add", 1),
+            ("修改付款", "fin:payment:edit", 2),
+            ("付款核销", "fin:payment:writeoff", 3),
+            ("删除付款", "fin:payment:delete", 4),
+        )
+        payment_permissions: list[SysPermission] = []
+        for name, perm_code, sort in payment_specs:
+            permission = await session.scalar(
+                select(SysPermission).where(SysPermission.perm_code == perm_code)
+            )
+            if permission is None:
+                permission = SysPermission(
+                    name=name,
+                    type=3,
+                    perm_code=perm_code,
+                    parent_id=payment_menu_id,
+                    sort=sort,
+                )
+                session.add(permission)
+                await session.flush()
+            payment_permissions.append(permission)
+        for admin_role in admin_roles:
+            for permission in payment_permissions:
                 granted = await session.scalar(
                     select(SysRolePermission.role_id).where(
                         SysRolePermission.role_id == admin_role.id,

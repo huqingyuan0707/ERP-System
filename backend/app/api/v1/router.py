@@ -17,6 +17,7 @@ from app.api.v1.endpoints import (
     inventory,
     log,
     payable,
+    payment,
     purchase_apply,
     purchase_inbound,
     purchase_order,
@@ -31,7 +32,6 @@ from app.api.v1.endpoints import (
 from app.core.config import settings
 from app.db.session import AsyncSessionLocal
 from app.schemas.common import ApiResponse, success_response
-
 
 logger = logging.getLogger("app.health")
 
@@ -120,3 +120,5 @@ api_router.include_router(sal_quotation.router)
 api_router.include_router(sal_order.router)
 # F-02：应付管理 /finance/payables（只读）；静态 summary/aging 端点先于 /{payable_id} 注册
 api_router.include_router(payable.router)
+# F-04：付款管理 /finance/payments；静态 summary 端点先于 /{payment_id} 注册
+api_router.include_router(payment.router)

@@ -34,6 +34,8 @@ export interface PayableQuery {
   status: number | null
   sourceNo: string | null
   overdue: boolean | null
+  /** 仅未结清（未付 > 0）：F-04 付款核销选择应付用 */
+  unsettled: boolean | null
   billDateStart: string | null
   billDateEnd: string | null
 }

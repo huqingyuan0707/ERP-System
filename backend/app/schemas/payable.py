@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common import PageQuery, to_camel
 
+
 ZERO = Decimal("0")
 
 
@@ -19,6 +20,8 @@ class PayableQuery(PageQuery):
     bill_date_start: date | None = None
     bill_date_end: date | None = None
     overdue: bool | None = None
+    # 仅未结清（unpaid_amount > 0，负数应退/预付视为已结清）；F-04 付款核销选择应付用
+    unsettled: bool | None = None
 
 
 class PayableOut(BaseModel):

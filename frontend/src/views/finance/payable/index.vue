@@ -41,6 +41,7 @@ const query = reactive<PayableQuery>({
   status: null,
   sourceNo: null,
   overdue: null,
+  unsettled: null,
   billDateStart: null,
   billDateEnd: null,
 })

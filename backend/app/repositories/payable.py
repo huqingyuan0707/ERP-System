@@ -38,6 +38,10 @@ class PayableRepository(BaseRepository[FinPayable]):
                     FinPayable.due_date >= today,
                 )
             )
+        if query.unsettled is True:
+            stmt = stmt.where(FinPayable.unpaid_amount > 0)
+        elif query.unsettled is False:
+            stmt = stmt.where(FinPayable.unpaid_amount <= 0)
         if query.keyword:
             like = f"%{query.keyword}%"
             stmt = stmt.where(
