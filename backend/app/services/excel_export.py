@@ -16,16 +16,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import AppException, ErrorCode
 from app.models.base_data import BdGoods, BdGoodsCategory, BdUnit, BdWarehouse
 from app.models.inventory import InvStock
-from app.models.sys import SysTask
+from app.models.sys import SysTask, SysUser
 from app.repositories.goods import GoodsRepository
 from app.repositories.task import TaskRepository
 from app.schemas.goods import GoodsCreate, GoodsImportErrorItem, GoodsImportResult, GoodsQuery
+from app.schemas.purchase_report import PurchaseReportQuery
 from app.schemas.task import TaskOut
 from app.services.audit import write_oper_log
 from app.services.goods import GoodsService
+from app.services.purchase_report import PurchaseReportService
 from app.utils.excel import ExcelWriter
 from app.utils.importer import parse_import_rows, to_decimal, to_str
-
 
 logger = logging.getLogger(__name__)
 EXPORT_DIR = Path("exports")
@@ -47,6 +48,7 @@ FIELD_HEADERS = {
 
 
 class ExcelExportService:
+
     def __init__(self, db: AsyncSession, tenant_id: int) -> None:
         self.db = db
         self.tenant_id = tenant_id
@@ -334,9 +336,91 @@ class ExcelExportService:
         finally:
             writer.close()
 
+    async def export_purchase_report(
+        self, created_by: int, query: PurchaseReportQuery, user: SysUser
+    ) -> TaskOut:
+        """R-02 采购报表导出：与列表同筛选、同数据范围。"""
+        return await self._execute_export(
+            "purchase_report",
+            {
+                "view": query.view,
+                "group_by": query.group_by,
+                "start_date": query.start_date.isoformat() if query.start_date else None,
+                "end_date": query.end_date.isoformat() if query.end_date else None,
+                "supplier_id": query.supplier_id,
+                "goods_id": query.goods_id,
+                "warehouse_id": query.warehouse_id,
+            },
+            created_by,
+            lambda task_id: self._run_purchase_report_export(task_id, query, user),
+        )
+
+    async def _run_purchase_report_export(
+        self, task_id: str, query: PurchaseReportQuery, user: SysUser
+    ) -> Path:
+        report = await PurchaseReportService(self.db, self.tenant_id).get_report(user, query)
+        writer = ExcelWriter(
+            [
+                "类型",
+                "单据日期",
+                "单号",
+                "来源单号",
+                "供应商",
+                "商品编码",
+                "商品名称",
+                "仓库",
+                "数量",
+                "单价",
+                "金额",
+            ],
+            "采购报表",
+        )
+        for row in report.items:
+            if query.view == "detail":
+                writer.append(
+                    [
+                        "入库" if row["type"] == "inbound" else "退货",
+                        str(row["date"]),
+                        row["docNo"],
+                        row["sourceNo"],
+                        row["supplierName"] or "",
+                        row["goodsCode"] or "",
+                        row["goodsName"] or "",
+                        row["warehouseName"] or "",
+                        str(row["qty"]),
+                        str(row["price"]),
+                        str(row["amount"]),
+                    ]
+                )
+            elif query.view == "summary":
+                writer.append(
+                    [
+                        str(row["groupName"] or ""),
+                        str(row["inboundQty"]),
+                        str(row["returnQty"]),
+                        str(row["netQty"]),
+                        str(row["inboundAmount"]),
+                        str(row["returnAmount"]),
+                        str(row["netAmount"]),
+                    ]
+                )
+            else:
+                writer.append(
+                    [
+                        str(row["rank"]),
+                        row["supplierName"] or "",
+                        str(row["netQty"]),
+                        str(row["netAmount"]),
+                    ]
+                )
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        path = EXPORT_DIR / f"purchase_report_{task_id}.xlsx"
+        writer.save(path)
+        return path
+
     async def export_report(self, created_by: int, report_type: str) -> TaskOut:
-        # 原接口只有占位文字，不能把占位文件当成真实报表导出成功。
-        raise AppException(ErrorCode.BAD_REQUEST, "通用报表数据尚未接入，暂不支持导出")
+        # 通用报表接口仍只支持占位提示，采购报表走专用端点 /reports/purchase/export。
+        raise AppException(ErrorCode.BAD_REQUEST, "通用报表数据尚未接入，请使用对应报表页的导出")
 
     async def export_statement(self, created_by: int, statement_id: int) -> TaskOut:
         raise AppException(ErrorCode.BAD_REQUEST, "对账单数据尚未接入，暂不支持导出")

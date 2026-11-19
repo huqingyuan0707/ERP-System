@@ -21,6 +21,7 @@ from app.api.v1.endpoints import (
     purchase_apply,
     purchase_inbound,
     purchase_order,
+    purchase_report,
     purchase_return,
     sal_order,
     sal_quotation,
@@ -120,5 +121,7 @@ api_router.include_router(sal_quotation.router)
 api_router.include_router(sal_order.router)
 # F-02：应付管理 /finance/payables（只读）；静态 summary/aging 端点先于 /{payable_id} 注册
 api_router.include_router(payable.router)
+# R-02：采购报表 /reports/purchase
+api_router.include_router(purchase_report.router)
 # F-04：付款管理 /finance/payments；静态 summary 端点先于 /{payment_id} 注册
 api_router.include_router(payment.router)

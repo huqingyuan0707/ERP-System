@@ -18,6 +18,8 @@ htmlcov/
 .pytype/
 # 代码质量检查的本地报告产物（pylint.json、质量报告等），不入库
 backend/reports/
+# 异步导出任务生成的 Excel 文件：运行时产物，不入库
+backend/exports/
 # 一次性修复脚本（已完成使命，不保留）
 backend/_fix_perm_param.py
 # 一次性数据体检脚本（含数据库连接串，属临时产物，不入库）
