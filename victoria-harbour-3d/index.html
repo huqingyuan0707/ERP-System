@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>维多利亚港 · Victoria Harbour 3D</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <div id="app">
+    <canvas id="scene"></canvas>
+    <div class="overlay">
+      <div class="brand">
+        <div class="brand-cn">维多利亚港</div>
+        <div class="brand-en">VICTORIA HARBOUR · HONG KONG</div>
+        <div class="brand-line"></div>
+        <div class="brand-desc">从尖沙咀望向中环 · 夜色中的海港天际线</div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">视角</div>
+        <div class="preset-list">
+          <button class="preset active" data-preset="panorama">维港全景</button>
+          <button class="preset" data-preset="central">中环天际线</button>
+          <button class="preset" data-preset="tsimshatsui">尖沙咀</button>
+          <button class="preset" data-preset="ferry">天星小轮</button>
+        </div>
+        <div class="panel-title">效果</div>
+        <div class="toggle-list">
+          <label><input type="checkbox" id="bloomToggle" checked> 霓虹辉光</label>
+          <label><input type="checkbox" id="autoRotate"> 自动巡游</label>
+        </div>
+      </div>
+      <div class="hint">拖拽旋转 · 滚轮缩放 · 右键平移</div>
+      <div class="loading" id="loading">正在点亮维港夜景…</div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

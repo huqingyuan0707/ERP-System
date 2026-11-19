@@ -1,0 +1,47 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #app { width: 100%; height: 100%; overflow: hidden; background: #050912; }
+body { font-family: "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif; }
+#scene { display: block; width: 100%; height: 100%; }
+
+.overlay { position: absolute; inset: 0; pointer-events: none; color: #e8eef7; }
+.brand { position: absolute; top: 38px; left: 44px; text-shadow: 0 2px 18px rgba(0,0,0,.8); }
+.brand-cn { font-size: 30px; font-weight: 600; letter-spacing: 6px; }
+.brand-en { font-size: 11px; letter-spacing: 3.4px; color: #9fb8d4; margin-top: 8px; }
+.brand-line { width: 54px; height: 2px; background: linear-gradient(90deg,#ffd79a,#ff7a59); margin: 14px 0 10px; }
+.brand-desc { font-size: 12px; color: #8fa6bf; letter-spacing: 1px; }
+
+.panel {
+  position: absolute; top: 38px; right: 40px; width: 216px; pointer-events: auto;
+  background: rgba(10, 18, 32, .62); border: 1px solid rgba(140, 180, 230, .18);
+  border-radius: 12px; padding: 18px 18px 16px; backdrop-filter: blur(14px);
+  box-shadow: 0 12px 40px rgba(0,0,0,.45);
+}
+.panel-title { font-size: 11px; color: #7f97b5; letter-spacing: 2px; margin-bottom: 10px; }
+.preset-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 18px; }
+.preset {
+  pointer-events: auto; cursor: pointer; font-size: 12px; padding: 8px 4px; color: #c8d6e8;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(160,190,230,.16); border-radius: 7px;
+  transition: all .2s ease;
+}
+.preset:hover { background: rgba(255,255,255,.12); color: #fff; }
+.preset.active { background: rgba(255, 183, 107, .18); border-color: rgba(255,183,107,.5); color: #ffd7a3; }
+.toggle-list { display: flex; flex-direction: column; gap: 9px; font-size: 12px; color: #b9c9dd; }
+.toggle-list label { cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.toggle-list input { accent-color: #ffb76b; cursor: pointer; }
+
+.hint {
+  position: absolute; bottom: 28px; left: 50%; transform: translateX(-50%);
+  font-size: 11px; letter-spacing: 2px; color: rgba(190, 210, 235, .5);
+}
+.loading {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: #050912; color: #ffd7a3; font-size: 14px; letter-spacing: 3px;
+  transition: opacity .9s ease; pointer-events: auto;
+}
+.loading.hidden { opacity: 0; pointer-events: none; }
+
+@media (max-width: 760px) {
+  .brand { top: 22px; left: 20px; }
+  .brand-cn { font-size: 22px; }
+  .panel { top: auto; bottom: 56px; right: 16px; width: 190px; }
+}
