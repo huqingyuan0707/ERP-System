@@ -264,6 +264,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("删除员工", "base:employee:delete", employee_menu.id, 3),
         _button("导出库存", "inv:stock:export", stock_menu.id, 6),
         _button("导出通用报表", "report:export", report_menu.id, 5),
+        _button("生成对账单", "fin:statement:add", statement_menu.id, 6),
         _button("导出对账单", "fin:statement:export", statement_menu.id, 7),
         _button("查看操作日志", "sys:log:view", user_menu.id, 6),
         _button("查看异步任务", "sys:task:view", user_menu.id, 7),
@@ -745,6 +746,7 @@ async def _ensure_permissions(session: AsyncSession) -> None:
         ("导出库存", "inv:stock:export", "inv:stock:list", 6),
         ("导出通用报表", "report:export", "rpt:finance:list", 5),
         ("导出对账单", "fin:statement:export", "fin:statement:list", 7),
+        ("生成对账单", "fin:statement:add", "fin:statement:list", 6),
     )
     export_permissions: list[SysPermission] = []
     for name, perm_code, parent_code, sort in export_specs:

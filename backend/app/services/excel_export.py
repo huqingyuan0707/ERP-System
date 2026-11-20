@@ -423,7 +423,36 @@ class ExcelExportService:
         raise AppException(ErrorCode.BAD_REQUEST, "通用报表数据尚未接入，请使用对应报表页的导出")
 
     async def export_statement(self, created_by: int, statement_id: int) -> TaskOut:
-        raise AppException(ErrorCode.BAD_REQUEST, "对账单数据尚未接入，暂不支持导出")
+        """F-06 对账单导出：快照已生成，按行写出，不重算业务数据。"""
+
+        async def run(task_id: str) -> Path:
+            from app.services.statement import StatementService
+
+            # 导出端点已校验 fin:statement:export；这里用读取权限一致的数据范围
+            user = await self.db.get(SysUser, created_by)
+            if user is None:
+                raise AppException(ErrorCode.FORBIDDEN, "导出用户不存在")
+            rows = await StatementService(self.db, self.tenant_id).export_rows(statement_id, user)
+            writer = ExcelWriter(["业务日期", "来源单号", "摘要", "借方", "贷方", "余额"], "对账单")
+            for row in rows:
+                writer.append(
+                    [
+                        str(row.get("bizDate", "")),
+                        str(row.get("sourceNo") or ""),
+                        str(row.get("summary") or ""),
+                        str(row.get("debitAmount", "0")),
+                        str(row.get("creditAmount", "0")),
+                        str(row.get("balance", "0")),
+                    ]
+                )
+            EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+            path = EXPORT_DIR / f"statement_export_{task_id}.xlsx"
+            writer.save(path)
+            return path
+
+        return await self._execute_export(
+            "statement_export", {"statement_id": statement_id}, created_by, run
+        )
 
     async def import_goods(self, content: bytes, created_by: int) -> GoodsImportResult:
         parsed = parse_import_rows(content)
