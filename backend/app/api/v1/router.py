@@ -26,6 +26,7 @@ from app.api.v1.endpoints import (
     receipt,
     purchase_return,
     sal_order,
+    sales_report,
     sal_outbound,
     sal_quotation,
     sal_return,
@@ -136,6 +137,8 @@ api_router.include_router(receipt.router)
 api_router.include_router(payable.router)
 # R-02：采购报表 /reports/purchase
 api_router.include_router(purchase_report.router)
+# R-03：销售报表 /reports/sales
+api_router.include_router(sales_report.router)
 # F-06：对账单 /finance/statements（供应商侧快照；预览/生成先于动态 /{id} 注册）
 api_router.include_router(statement.router)
 # F-04：付款管理 /finance/payments；静态 summary 端点先于 /{payment_id} 注册

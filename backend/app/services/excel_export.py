@@ -21,10 +21,12 @@ from app.repositories.goods import GoodsRepository
 from app.repositories.task import TaskRepository
 from app.schemas.goods import GoodsCreate, GoodsImportErrorItem, GoodsImportResult, GoodsQuery
 from app.schemas.purchase_report import PurchaseReportQuery
+from app.schemas.sales_report import SalesReportQuery
 from app.schemas.task import TaskOut
 from app.services.audit import write_oper_log
 from app.services.goods import GoodsService
 from app.services.purchase_report import PurchaseReportService
+from app.services.sales_report import SalesReportService
 from app.utils.excel import ExcelWriter
 from app.utils.importer import parse_import_rows, to_decimal, to_str
 
@@ -415,6 +417,88 @@ class ExcelExportService:
                 )
         EXPORT_DIR.mkdir(parents=True, exist_ok=True)
         path = EXPORT_DIR / f"purchase_report_{task_id}.xlsx"
+        writer.save(path)
+        return path
+
+    async def export_sales_report(
+        self, created_by: int, query: SalesReportQuery, user: SysUser
+    ) -> TaskOut:
+        """R-03 销售报表导出：与列表同筛选、同数据范围。"""
+        return await self._execute_export(
+            "sales_report",
+            {
+                "view": query.view,
+                "group_by": query.group_by,
+                "start_date": query.start_date.isoformat() if query.start_date else None,
+                "end_date": query.end_date.isoformat() if query.end_date else None,
+                "customer_id": query.customer_id,
+                "goods_id": query.goods_id,
+                "warehouse_id": query.warehouse_id,
+            },
+            created_by,
+            lambda task_id: self._run_sales_report_export(task_id, query, user),
+        )
+
+    async def _run_sales_report_export(
+        self, task_id: str, query: SalesReportQuery, user: SysUser
+    ) -> Path:
+        report = await SalesReportService(self.db, self.tenant_id).get_report(user, query)
+        writer = ExcelWriter(
+            [
+                "类型",
+                "单据日期",
+                "单号",
+                "来源单号",
+                "客户",
+                "商品编码",
+                "商品名称",
+                "仓库",
+                "数量",
+                "单价",
+                "金额",
+            ],
+            "销售报表",
+        )
+        for row in report.items:
+            if query.view == "detail":
+                writer.append(
+                    [
+                        "出库" if row["type"] == "outbound" else "退货",
+                        str(row["date"]),
+                        row["docNo"],
+                        row["sourceNo"],
+                        row["customerName"] or "",
+                        row["goodsCode"] or "",
+                        row["goodsName"] or "",
+                        row["warehouseName"] or "",
+                        str(row["qty"]),
+                        str(row["price"]),
+                        str(row["amount"]),
+                    ]
+                )
+            elif query.view == "summary":
+                writer.append(
+                    [
+                        str(row["groupName"] or ""),
+                        str(row["outboundQty"]),
+                        str(row["returnQty"]),
+                        str(row["netQty"]),
+                        str(row["outboundAmount"]),
+                        str(row["returnAmount"]),
+                        str(row["netAmount"]),
+                    ]
+                )
+            else:
+                writer.append(
+                    [
+                        str(row["rank"]),
+                        str(row["rankName"] or ""),
+                        str(row["netQty"]),
+                        str(row["netAmount"]),
+                    ]
+                )
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        path = EXPORT_DIR / f"sales_report_{task_id}.xlsx"
         writer.save(path)
         return path
 
