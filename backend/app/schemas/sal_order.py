@@ -66,6 +66,12 @@ CREDIT_OCCUPYING_STATUSES = (
     SalOrderStatus.PARTIAL_OUT,
 )
 
+# 允许出库的状态：已审（未出库）/ 部分出库；草稿、关闭、完成不可出库
+OUTBOUNDABLE_STATUSES = (
+    SalOrderStatus.APPROVED,
+    SalOrderStatus.PARTIAL_OUT,
+)
+
 
 class SalOrderItemIn(BaseModel):
     """订单明细行入参：单价由销售员填写，金额由 Service 重算，禁止前端直传 amount。"""
@@ -258,6 +264,23 @@ class SalOrderFromQuotationOut(BaseModel):
     order_date: date  # 预填下单日期（取当天）
     remark: str | None = None  # 预填备注，带出来源报价单号便于追溯
     items: list[SalOrderFromQuotationItem] = Field(default_factory=list)  # 预填明细
+
+
+class SalOrderOutboundLine(BaseModel):
+    """出库回写明细分行：订单明细 ID + 本次已确认出库数量。"""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    order_item_id: int  # 对应 sal_order_item.id
+    qty: Decimal = Field(gt=0, max_digits=18, decimal_places=4)
+
+
+class SalOrderOutboundApply(BaseModel):
+    """出库确认回写入参：由 SA-03 在同一事务内调用，只改 outbound_qty 与订单状态。"""
+
+    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+
+    lines: list[SalOrderOutboundLine] = Field(min_length=1, max_length=200)
 
 
 class SalOrderConvert(BaseModel):

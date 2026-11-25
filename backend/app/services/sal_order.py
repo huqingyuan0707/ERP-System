@@ -44,6 +44,7 @@ from app.schemas.sal_order import (
     CLOSABLE_STATUSES,
     CREDIT_OCCUPYING_STATUSES,
     ORDER_STATUS_TEXT,
+    OUTBOUNDABLE_STATUSES,
     SalOrderAudit,
     SalOrderClose,
     SalOrderConvert,
@@ -53,6 +54,7 @@ from app.schemas.sal_order import (
     SalOrderItemIn,
     SalOrderItemOut,
     SalOrderOut,
+    SalOrderOutboundApply,
     SalOrderQuery,
     SalOrderStatus,
     SalOrderUpdate,
@@ -530,6 +532,76 @@ class SalOrderService:
             if created is None:
                 raise AppException(ErrorCode.SERVER_ERROR, "销售订单创建失败")
             result = (await self._to_out_list([created], with_items=True))[0]
+            if commit:
+                await self._db.commit()
+            return result
+        except Exception:
+            if commit:
+                await self._db.rollback()
+            raise
+
+    # ---------- 出库回写（SA-03 调用） ----------
+
+    async def apply_outbound(
+        self,
+        order_id: int,
+        payload: SalOrderOutboundApply,
+        user: SysUser,
+        *,
+        commit: bool = False,
+    ) -> SalOrderOut:
+        """出库确认回写：累加 outbound_qty、重算订单状态，超剩余数量拒绝（409）。
+
+        边界：只改 sal_order_item.outbound_qty 与 sal_order.status/version，
+        不写库存与应收（SA-03 职责）；由 SA-03 同事务调用，默认 commit=False。
+        """
+        try:
+            order = await self._repo.get_with_lock(order_id, for_update=True)
+            if order is None or order.is_deleted:
+                raise AppException(ErrorCode.NOT_FOUND, "销售订单不存在")
+            if order.status not in OUTBOUNDABLE_STATUSES:
+                raise AppException(
+                    ErrorCode.CONFLICT, "销售订单当前状态不允许出库（需已审或部分出库）"
+                )
+            active_items = await self._active_items(order.id)
+            item_map = {int(item.id): item for item in active_items}
+
+            merged: dict[int, Decimal] = {}
+            for line in payload.lines:
+                merged[line.order_item_id] = merged.get(line.order_item_id, ZERO) + line.qty
+            for item_id, qty in merged.items():
+                item = item_map.get(item_id)
+                if item is None:
+                    raise AppException(ErrorCode.VALIDATION_ERROR, f"订单明细不存在: {item_id}")
+                remaining = Decimal(str(item.qty)) - Decimal(str(item.outbound_qty))
+                if qty > remaining:
+                    raise AppException(
+                        ErrorCode.CONFLICT,
+                        f"出库数量 {qty} 超过剩余未出库数量 {remaining}（商品 ID {item.goods_id}）",
+                    )
+            # 全部校验通过后才抢占版本号并回写
+            await self._bump_version(order, None, user.id)
+            for item_id, qty in merged.items():
+                item = item_map[item_id]
+                item.outbound_qty = Decimal(str(item.outbound_qty)) + qty
+                item.updated_by = user.id
+            all_done = all(
+                Decimal(str(item.outbound_qty)) >= Decimal(str(item.qty)) for item in active_items
+            )
+            order.status = SalOrderStatus.COMPLETED if all_done else SalOrderStatus.PARTIAL_OUT
+            order.updated_by = user.id
+            await self._write_log(
+                user.id,
+                "销售订单出库回写",
+                order.id,
+                order.order_no,
+                extra={"lines": len(payload.lines), "qty": str(sum(merged.values(), ZERO))},
+            )
+            await self._db.flush()
+            refreshed = await self._repo.get_with_lock(order.id)
+            if refreshed is None:
+                raise AppException(ErrorCode.NOT_FOUND, "销售订单不存在")
+            result = (await self._to_out_list([refreshed], with_items=True))[0]
             if commit:
                 await self._db.commit()
             return result

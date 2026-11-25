@@ -24,7 +24,9 @@ from app.api.v1.endpoints import (
     purchase_report,
     purchase_return,
     sal_order,
+    sal_outbound,
     sal_quotation,
+    sal_return,
     statement,
     supplier,
     system,
@@ -120,6 +122,10 @@ api_router.include_router(sal_quotation.router)
 # SAL-02/04~09：销售订单 /sales/orders；credit-info、from-quotation 静态段在 sal_order 模块内
 # 先于 /{order_id} 注册；转单 POST /sales/quotations/{id}/convert 与报价 GET 详情无路径冲突
 api_router.include_router(sal_order.router)
+# SA-03：销售出库 /sales/outbounds
+api_router.include_router(sal_outbound.router)
+# SA-04：销售退货 /sales/returns
+api_router.include_router(sal_return.router)
 # F-02：应付管理 /finance/payables（只读）；静态 summary/aging 端点先于 /{payable_id} 注册
 api_router.include_router(payable.router)
 # R-02：采购报表 /reports/purchase

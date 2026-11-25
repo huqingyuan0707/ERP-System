@@ -227,6 +227,8 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     quotation_menu = next(menu for menu in menus if menu.perm_code == "sal:quotation:list")
     # SAL-02/04~09 销售订单：按钮权限挂在「销售订单」菜单下
     sal_order_menu = next(menu for menu in menus if menu.perm_code == "sal:order:list")
+    sal_outbound_menu = next(menu for menu in menus if menu.perm_code == "sal:outbound:list")
+    sal_return_menu = next(menu for menu in menus if menu.perm_code == "sal:return:list")
     # F-04 付款管理：按钮权限挂在「付款单」菜单下
     payment_menu = next(menu for menu in menus if menu.perm_code == "fin:payment:list")
 
@@ -302,6 +304,16 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("提交销售订单", "sal:order:submit", sal_order_menu.id, 3),
         _button("审核销售订单", "sal:order:audit", sal_order_menu.id, 4),
         _button("关闭销售订单", "sal:order:close", sal_order_menu.id, 5),
+        # SA-03 销售出库：新增/修改/确认/删除（查看复用 sal:outbound:list）
+        _button("新增销售出库", "sal:outbound:add", sal_outbound_menu.id, 1),
+        _button("修改销售出库", "sal:outbound:edit", sal_outbound_menu.id, 2),
+        _button("确认销售出库", "sal:outbound:confirm", sal_outbound_menu.id, 3),
+        _button("删除销售出库", "sal:outbound:delete", sal_outbound_menu.id, 4),
+        # SA-04 销售退货：新增/修改/确认/删除（查看复用 sal:return:list）
+        _button("新增销售退货", "sal:return:add", sal_return_menu.id, 1),
+        _button("修改销售退货", "sal:return:edit", sal_return_menu.id, 2),
+        _button("确认销售退货", "sal:return:confirm", sal_return_menu.id, 3),
+        _button("删除销售退货", "sal:return:delete", sal_return_menu.id, 4),
         # F-04 付款管理：新增/修改/核销/删除（查看权限复用菜单上的 fin:payment:list；
         # 核销是资金操作，单列 writeoff 权限）
         _button("新增付款", "fin:payment:add", payment_menu.id, 1),
@@ -873,6 +885,25 @@ async def _ensure_permissions(session: AsyncSession) -> None:
                 ("修改采购退货", "pur:return:edit", 2),
                 ("确认采购退货", "pur:return:confirm", 3),
                 ("删除采购退货", "pur:return:delete", 4),
+            ),
+        ),
+        # SA-03 销售出库 / SA-04 销售退货：老库补齐按钮并授权 admin（幂等）
+        (
+            "sal:outbound:list",
+            (
+                ("新增销售出库", "sal:outbound:add", 1),
+                ("修改销售出库", "sal:outbound:edit", 2),
+                ("确认销售出库", "sal:outbound:confirm", 3),
+                ("删除销售出库", "sal:outbound:delete", 4),
+            ),
+        ),
+        (
+            "sal:return:list",
+            (
+                ("新增销售退货", "sal:return:add", 1),
+                ("修改销售退货", "sal:return:edit", 2),
+                ("确认销售退货", "sal:return:confirm", 3),
+                ("删除销售退货", "sal:return:delete", 4),
             ),
         ),
     )

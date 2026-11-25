@@ -24,7 +24,13 @@ recursive = yes
 # 注意：pylint 的 init-hook 不支持 %(rcfile)s 之类的变量替换，
 #       这里的路径是相对「执行命令时的当前目录」的，
 #       因此 CI 与本地都必须在 backend 目录下执行本命令。
-init-hook = 'import sys; sys.path.insert(0, ".")'
+#
+# 另外：pre-commit 会为 pylint 创建独立虚拟环境，其中只有 pylint 本身，
+#       看不到项目的第三方依赖（fastapi/sqlalchemy/pydantic 等），
+#       会把正常的 import 误报为 E0401 import-error。这里把项目本地 venv
+#       的 site-packages 追加进搜索路径（仅在目录存在时），
+#       使提交钩子在 Windows 本地也能正确解析依赖；CI 无此目录时不受影响。
+init-hook = 'import sys, os; sys.path.insert(0, "."); [sys.path.insert(0, p) for p in (".venv/Lib/site-packages", "backend/.venv/Lib/site-packages") if os.path.isdir(p)]'
 
 # 单个文件内重复代码的最小行数：默认 4 行太敏感，会把 ERP 里
 # 「列表查询 + 分页 + 统一响应」这类刻意重复的模板代码全部报出来
