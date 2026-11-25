@@ -231,6 +231,7 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
     sal_return_menu = next(menu for menu in menus if menu.perm_code == "sal:return:list")
     # F-04 付款管理：按钮权限挂在「付款单」菜单下
     payment_menu = next(menu for menu in menus if menu.perm_code == "fin:payment:list")
+    receipt_menu = next(menu for menu in menus if menu.perm_code == "fin:receipt:list")
 
     buttons = [
         _button("新增用户", "sys:user:add", user_menu.id, 1),
@@ -320,6 +321,11 @@ async def _seed_permissions(session: AsyncSession) -> list[SysPermission]:
         _button("修改付款", "fin:payment:edit", payment_menu.id, 2),
         _button("付款核销", "fin:payment:writeoff", payment_menu.id, 3),
         _button("删除付款", "fin:payment:delete", payment_menu.id, 4),
+        # F-03 收款单：新增/修改/核销/删除（查看复用菜单上的 fin:receipt:list）
+        _button("新增收款", "fin:receipt:add", receipt_menu.id, 1),
+        _button("修改收款", "fin:receipt:edit", receipt_menu.id, 2),
+        _button("收款核销", "fin:receipt:writeoff", receipt_menu.id, 3),
+        _button("删除收款", "fin:receipt:delete", receipt_menu.id, 4),
         _button("超级权限", "*", dir_sys.id, 99),
     ]
     session.add_all(buttons)
@@ -1010,6 +1016,47 @@ async def _ensure_permissions(session: AsyncSession) -> None:
             payment_permissions.append(permission)
         for admin_role in admin_roles:
             for permission in payment_permissions:
+                granted = await session.scalar(
+                    select(SysRolePermission.role_id).where(
+                        SysRolePermission.role_id == admin_role.id,
+                        SysRolePermission.permission_id == permission.id,
+                    )
+                )
+                if granted is None:
+                    session.add(
+                        SysRolePermission(role_id=admin_role.id, permission_id=permission.id)
+                    )
+    await session.flush()
+
+    # F-03 收款管理按钮权限：老库补齐并授权 admin（幂等，与付款块同口径）
+    receipt_menu_id = await session.scalar(
+        select(SysPermission.id).where(SysPermission.perm_code == "fin:receipt:list")
+    )
+    if receipt_menu_id is not None:
+        receipt_specs: tuple[tuple[str, str, int], ...] = (
+            ("新增收款", "fin:receipt:add", 1),
+            ("修改收款", "fin:receipt:edit", 2),
+            ("收款核销", "fin:receipt:writeoff", 3),
+            ("删除收款", "fin:receipt:delete", 4),
+        )
+        receipt_permissions: list[SysPermission] = []
+        for name, perm_code, sort in receipt_specs:
+            permission = await session.scalar(
+                select(SysPermission).where(SysPermission.perm_code == perm_code)
+            )
+            if permission is None:
+                permission = SysPermission(
+                    name=name,
+                    type=3,
+                    perm_code=perm_code,
+                    parent_id=receipt_menu_id,
+                    sort=sort,
+                )
+                session.add(permission)
+                await session.flush()
+            receipt_permissions.append(permission)
+        for admin_role in admin_roles:
+            for permission in receipt_permissions:
                 granted = await session.scalar(
                     select(SysRolePermission.role_id).where(
                         SysRolePermission.role_id == admin_role.id,
