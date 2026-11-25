@@ -1,11 +1,10 @@
-"""供应商对账单 Schema（F-06，对外 camelCase）。
+"""对账单 Schema（F-06，对外 camelCase）。
 
-本切片只实现供应商侧（party_type=2）；客户侧需 F-01/F-03 落地后再接。
+party_type：1=客户（应收侧），2=供应商（应付侧）；两侧共用快照表与明细结构。
 """
 
 from datetime import date
 from decimal import Decimal
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -64,12 +63,12 @@ class StatementDetailOut(StatementOut):
 
 
 class StatementCreate(BaseModel):
-    """生成快照入参；仅支持供应商。"""
+    """生成快照入参；party_type=1 客户 / 2 供应商。"""
 
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
-    party_type: Literal[2]
-    party_id: int = Field(gt=0, description="供应商 ID")
+    party_type: int = Field(ge=1, le=2, description="1=客户（应收）/2=供应商（应付）")
+    party_id: int = Field(gt=0, description="客户或供应商 ID")
     period_start: date
     period_end: date
     remark: str | None = None

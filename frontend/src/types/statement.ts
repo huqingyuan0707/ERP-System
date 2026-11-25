@@ -1,4 +1,4 @@
-/** 对账单类型（F-06，与后端 camelCase 契约对齐；本切片为供应商侧）。 */
+/** 对账单类型（F-06，与后端 camelCase 契约对齐）；partyType：1=客户 / 2=供应商。 */
 
 export interface StatementItem {
   bizDate: string
@@ -29,6 +29,7 @@ export interface Statement {
 export interface StatementQuery {
   page: number
   pageSize: number
+  partyType: number | null
   partyId: number | null
   periodStart: string | null
   periodEnd: string | null
@@ -38,7 +39,7 @@ export interface StatementQuery {
 }
 
 export interface StatementCreate {
-  partyType: 2
+  partyType: 1 | 2
   partyId: number
   periodStart: string
   periodEnd: string

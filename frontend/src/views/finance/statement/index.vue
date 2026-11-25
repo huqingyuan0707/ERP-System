@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** F-06 供应商对账单：生成前预览 → 生成快照 → 列表/明细/导出（快照不可改）。 */
+/** F-06 对账单（客户/供应商）：生成前预览 → 生成快照 → 列表/明细/导出（快照不可改）。 */
 import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
@@ -8,7 +8,9 @@ import {
   getTaskDetail,
   isTerminalTaskError,
 } from '@/api/task'
+import { getCustomerOptions } from '@/api/customer'
 import { getSupplierOptions } from '@/api/supplier'
+import type { Customer } from '@/types/customer'
 import {
   createStatement,
   exportStatement,
@@ -22,6 +24,7 @@ import type { Supplier } from '@/types/supplier'
 const query = reactive({
   page: 1,
   pageSize: 20,
+  partyType: 2 as number | null,
   partyId: null as number | null,
   periodStart: null as string | null,
   periodEnd: null as string | null,
@@ -31,6 +34,7 @@ const query = reactive({
 })
 
 const draft = reactive({
+  partyType: 2 as 1 | 2,
   partyId: null as number | null,
   periodStart: null as string | null,
   periodEnd: null as string | null,
@@ -41,6 +45,7 @@ const loading = ref(false)
 const rows = ref<Statement[]>([])
 const total = ref(0)
 const suppliers = ref<Supplier[]>([])
+const customers = ref<Customer[]>([])
 const dialogVisible = ref(false)
 const previewing = ref(false)
 const building = ref(false)
@@ -58,9 +63,27 @@ let failures = 0
 const MAX_POLLS = 150
 const MAX_FAILURES = 3
 
-const supplierName = (id: number): string => {
-  const supplier = suppliers.value.find((item) => item.id === id)
-  return supplier?.name ?? `#${id}`
+const partyTypeName = (type: number): string => (type === 1 ? '客户' : '供应商')
+
+const partyName = (type: number, id: number): string => {
+  const list = type === 1 ? customers.value : suppliers.value
+  const found = list.find((item) => item.id === id)
+  return found?.name ?? `#${id}`
+}
+
+/** 筛选+生成对话框共用的对象选项（随类型切换）。 */
+const partyOptions = (type: number): { id: number; name: string }[] =>
+  type === 1 ? customers.value : suppliers.value
+
+/** 切换筛选类型时清空对象，避免客户 ID 误作供应商 ID 查询。 */
+const handleQueryTypeChange = (): void => {
+  query.partyId = null
+}
+
+/** 切换生成类型时清空已选对象与预览，防止跨类型误生成。 */
+const handleDraftTypeChange = (): void => {
+  draft.partyId = null
+  previewData.value = null
 }
 
 const money = (value: string | number | undefined | null): string => {
@@ -71,9 +94,14 @@ const money = (value: string | number | undefined | null): string => {
   })
 }
 
-const loadSuppliers = async (): Promise<void> => {
+const loadParties = async (): Promise<void> => {
   try {
-    suppliers.value = await getSupplierOptions()
+    const [supplierList, customerList] = await Promise.all([
+      getSupplierOptions(),
+      getCustomerOptions(),
+    ])
+    suppliers.value = supplierList
+    customers.value = customerList
   } catch {
     // 统一拦截
   }
@@ -99,6 +127,7 @@ const search = (): void => {
 
 const reset = (): void => {
   query.page = 1
+  query.partyType = 2
   query.partyId = null
   query.periodStart = null
   query.periodEnd = null
@@ -109,6 +138,7 @@ const reset = (): void => {
 }
 
 const openCreate = (): void => {
+  draft.partyType = 2
   draft.partyId = null
   draft.periodStart = null
   draft.periodEnd = null
@@ -119,13 +149,13 @@ const openCreate = (): void => {
 
 const doPreview = async (): Promise<void> => {
   if (!draft.partyId || !draft.periodStart || !draft.periodEnd) {
-    ElMessage.warning('请选择供应商并填写对账期间')
+    ElMessage.warning(`请选择${partyTypeName(draft.partyType)}并填写对账期间`)
     return
   }
   previewing.value = true
   try {
     previewData.value = await previewStatement({
-      partyType: 2,
+      partyType: draft.partyType,
       partyId: draft.partyId,
       periodStart: draft.periodStart,
       periodEnd: draft.periodEnd,
@@ -143,7 +173,7 @@ const doCreate = async (): Promise<void> => {
   building.value = true
   try {
     await createStatement({
-      partyType: 2,
+      partyType: draft.partyType,
       partyId: draft.partyId,
       periodStart: draft.periodStart,
       periodEnd: draft.periodEnd,
@@ -245,7 +275,7 @@ const doExport = async (id: number): Promise<void> => {
 
 const previewItems = computed<StatementItem[]>(() => previewData.value?.items ?? [])
 
-void loadSuppliers()
+void loadParties()
 void load()
 </script>
 
@@ -254,15 +284,21 @@ void load()
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>对账单（供应商）</span>
+          <span>对账单（客户 / 供应商）</span>
           <el-button type="primary" @click="openCreate">生成对账单</el-button>
         </div>
       </template>
 
       <el-form :inline="true" class="filter-form" @submit.prevent="search">
-        <el-form-item label="供应商">
+        <el-form-item label="类型">
+          <el-select v-model="query.partyType" clearable placeholder="全部" style="width: 110px" @change="handleQueryTypeChange">
+            <el-option label="客户" :value="1" />
+            <el-option label="供应商" :value="2" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="query.partyType === 1 ? '客户' : '对象'">
           <el-select v-model="query.partyId" clearable filterable placeholder="全部" style="width: 200px">
-            <el-option v-for="item in suppliers" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in partyOptions(query.partyType ?? 2)" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="对账期间">
@@ -281,8 +317,11 @@ void load()
 
       <el-table v-loading="loading" :data="rows" border stripe style="width: 100%">
         <el-table-column prop="statementNo" label="对账单号" width="180" />
-        <el-table-column label="供应商" min-width="160">
-          <template #default="{ row }: { row: Statement }">{{ supplierName(row.partyId) }}</template>
+        <el-table-column label="往来单位" min-width="160">
+          <template #default="{ row }: { row: Statement }">
+            <el-tag size="small" class="party-tag">{{ partyTypeName(row.partyType) }}</el-tag>
+            {{ partyName(row.partyType, row.partyId) }}
+          </template>
         </el-table-column>
         <el-table-column prop="periodStart" label="期间起" width="120" />
         <el-table-column prop="periodEnd" label="期间止" width="120" />
@@ -322,11 +361,17 @@ void load()
     </el-card>
 
     <!-- 生成：先预览再确认，快照不可改 -->
-    <el-dialog v-model="dialogVisible" title="生成供应商对账单" width="920px">
+    <el-dialog v-model="dialogVisible" title="生成对账单" width="920px">
       <el-form :inline="true" class="filter-form">
-        <el-form-item label="供应商">
+        <el-form-item label="类型">
+          <el-select v-model="draft.partyType" style="width: 110px" @change="handleDraftTypeChange">
+            <el-option label="客户" :value="1" />
+            <el-option label="供应商" :value="2" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="draft.partyType === 1 ? '客户' : '供应商'">
           <el-select v-model="draft.partyId" filterable placeholder="请选择" style="width: 220px">
-            <el-option v-for="item in suppliers" :key="item.id" :label="item.name" :value="item.id" />
+            <el-option v-for="item in partyOptions(draft.partyType)" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="期间">
@@ -414,6 +459,7 @@ void load()
 .preview-totals span { font-size: 12px; color: #909399; }
 .preview-totals b { font-size: 18px; }
 .net { color: #409eff; }
+.party-tag { margin-right: 6px; }
 .hint { margin-top: 12px; }
 .pagination { display: flex; justify-content: flex-end; margin-top: 16px; }
 </style>
