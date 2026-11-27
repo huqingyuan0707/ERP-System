@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 经营看板（R-01 第一步）：全部指标取自后端真实聚合接口，不使用模拟数据。 */
+/** 经营看板（R-01）：全部指标取自后端真实聚合接口（销售/采购按业务日期净额）。 */
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useUserStore } from '@/stores/user'
 import * as echarts from 'echarts'
@@ -13,9 +13,12 @@ interface Overview {
   todaySalesCount: number
   monthSalesAmount: number | string
   monthSalesCount: number
+  todayPurchaseAmount: number | string
+  monthPurchaseAmount: number | string
   totalInventoryValue: number | string
   totalInventoryQty: number | string
   lowStockCount: number
+  unhandledAlertCount: number
   totalReceivable: number | string
   totalPayable: number | string
   totalCustomers: number
@@ -39,9 +42,12 @@ const overview = ref<Overview>({
   todaySalesCount: 0,
   monthSalesAmount: 0,
   monthSalesCount: 0,
+  todayPurchaseAmount: 0,
+  monthPurchaseAmount: 0,
   totalInventoryValue: 0,
   totalInventoryQty: 0,
   lowStockCount: 0,
+  unhandledAlertCount: 0,
   totalReceivable: 0,
   totalPayable: 0,
   totalCustomers: 0,
@@ -64,7 +70,7 @@ const loadOverview = async (): Promise<void> => {
   }
 }
 
-// 采购净额趋势图表（销售出库未上线前展示真实采购数据）
+// 销售净额趋势图表（确认出库 - 确认退货，按业务日期）
 const salesTrendChart = ref<HTMLElement>()
 let salesTrendInstance: echarts.ECharts | null = null
 
@@ -85,7 +91,7 @@ const initSalesTrendChart = async (): Promise<void> => {
     const option: EChartsOption = {
       backgroundColor: '#fff',
       title: {
-        text: hasData ? '采购净额趋势（近 30 天）' : '近 30 天暂无已确认采购单据',
+        text: hasData ? '销售净额趋势（近 30 天）' : '近 30 天暂无已确认销售单据',
         left: 'left',
         textStyle: {
           color: '#1f2937',
@@ -148,7 +154,7 @@ const initSalesTrendChart = async (): Promise<void> => {
       },
       series: [
         {
-          name: '采购净额',
+          name: '销售净额',
           type: 'line',
           data: amounts,
           smooth: true,
@@ -174,7 +180,88 @@ const initSalesTrendChart = async (): Promise<void> => {
     }
     salesTrendInstance.setOption(option)
   } catch (error) {
+    console.error('加载销售净额趋势失败:', error)
+  }
+}
+
+// 采购净额趋势图表
+const purchaseTrendChart = ref<HTMLElement>()
+let purchaseTrendInstance: echarts.ECharts | null = null
+
+const initPurchaseTrendChart = async (): Promise<void> => {
+  if (!purchaseTrendChart.value) return
+  try {
+    const data = await request<TrendItem[]>({
+      url: '/dashboard/purchase-trend',
+      method: 'get',
+      params: { days: 30 },
+    })
+    const dates = data.map((item) => item.date)
+    const amounts = data.map((item) => Number(item.amount))
+    const hasData = amounts.some((value) => value !== 0)
+    purchaseTrendInstance = echarts.init(purchaseTrendChart.value)
+    purchaseTrendInstance.setOption({
+      backgroundColor: '#fff',
+      title: {
+        text: hasData ? '采购净额趋势（近 30 天）' : '近 30 天暂无已确认采购单据',
+        left: 'left',
+        textStyle: { color: '#1f2937', fontSize: 16, fontWeight: 600 },
+      },
+      tooltip: { trigger: 'axis', backgroundColor: '#fff', borderColor: '#e5e7eb' },
+      grid: { left: '3%', right: '4%', bottom: '3%', top: '15%', containLabel: true },
+      xAxis: { type: 'category', data: dates, boundaryGap: false },
+      yAxis: { type: 'value', name: '金额(元)' },
+      series: [
+        {
+          name: '采购净额',
+          type: 'line',
+          data: amounts,
+          smooth: true,
+          symbol: 'circle',
+          symbolSize: 6,
+          lineStyle: { width: 2, color: '#10b981' },
+          itemStyle: { color: '#10b981' },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(16, 185, 129, 0.3)' },
+              { offset: 1, color: 'rgba(16, 185, 129, 0.05)' },
+            ]),
+          },
+        },
+      ],
+    } as EChartsOption)
+  } catch (error) {
     console.error('加载采购净额趋势失败:', error)
+  }
+}
+
+interface RankRow {
+  id: number
+  name: string
+  amount: number | string
+}
+interface StockRow {
+  warehouseName: string
+  goodsName: string
+  availableQty: number | string
+  stockLower: number | string
+}
+const customerRanks = ref<RankRow[]>([])
+const goodsRanks = ref<RankRow[]>([])
+const lowStocks = ref<StockRow[]>([])
+
+const loadSideData = async (): Promise<void> => {
+  try {
+    const [customer, goods, low] = await Promise.all([
+      request<RankRow[]>({ url: '/dashboard/ranking', method: 'get', params: { kind: 'customer' } }),
+      request<RankRow[]>({ url: '/dashboard/ranking', method: 'get', params: { kind: 'goods' } }),
+      request<StockRow[]>({ url: '/dashboard/low-stocks', method: 'get' }),
+    ])
+    customerRanks.value = customer
+    goodsRanks.value = goods
+    lowStocks.value = low
+  } catch (error) {
+    console.error('加载排行/低库存数据失败:', error)
   }
 }
 
@@ -272,19 +359,25 @@ const initInventoryCategoryChart = async (): Promise<void> => {
 
 const handleResize = (): void => {
   salesTrendInstance?.resize()
+  purchaseTrendInstance?.resize()
   inventoryCategoryInstance?.resize()
 }
 
 onMounted(async () => {
   await loadOverview()
-  await initSalesTrendChart()
-  await initInventoryCategoryChart()
+  await Promise.all([
+    initSalesTrendChart(),
+    initPurchaseTrendChart(),
+    initInventoryCategoryChart(),
+    loadSideData(),
+  ])
   window.addEventListener('resize', handleResize)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
   salesTrendInstance?.dispose()
+  purchaseTrendInstance?.dispose()
   inventoryCategoryInstance?.dispose()
 })
 </script>
@@ -304,9 +397,9 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 数据口径说明：销售模块未上线，避免把 0 误读为「今天没有生意」 -->
+    <!-- 数据口径说明 -->
     <div class="scope-notice">
-      销售订单/出库模块尚未上线，今日/本月销售额固定为 0；趋势图展示「已确认采购入库 − 已确认采购退货」的真实净额。
+      今日/本月销售与采购均按业务日期统计「已确认增加单据 − 已确认退货」，草稿不计；应收/应付为冲减退货后的净额。
     </div>
 
     <!-- 核心指标卡片 -->
@@ -429,7 +522,47 @@ onUnmounted(() => {
       </div>
 
       <div class="chart-card">
+        <div ref="purchaseTrendChart" class="chart-container"></div>
+      </div>
+
+      <div class="chart-card">
         <div ref="inventoryCategoryChart" class="chart-container"></div>
+      </div>
+    </div>
+
+    <!-- 排行与低库存 -->
+    <div class="side-grid">
+      <div class="side-card">
+        <h3>客户销售 Top 5</h3>
+        <ol v-if="customerRanks.length" class="rank-list">
+          <li v-for="(row, index) in customerRanks" :key="row.id">
+            <span class="rank-index">{{ index + 1 }}</span>
+            <span class="rank-name">{{ row.name }}</span>
+            <span class="rank-amount">¥{{ money(row.amount) }}</span>
+          </li>
+        </ol>
+        <p v-else class="empty-hint">暂无已确认销售数据</p>
+      </div>
+      <div class="side-card">
+        <h3>商品销售 Top 5</h3>
+        <ol v-if="goodsRanks.length" class="rank-list">
+          <li v-for="(row, index) in goodsRanks" :key="row.id">
+            <span class="rank-index">{{ index + 1 }}</span>
+            <span class="rank-name">{{ row.name }}</span>
+            <span class="rank-amount">¥{{ money(row.amount) }}</span>
+          </li>
+        </ol>
+        <p v-else class="empty-hint">暂无已确认销售数据</p>
+      </div>
+      <div class="side-card">
+        <h3>低库存 Top 10</h3>
+        <ul v-if="lowStocks.length" class="stock-list">
+          <li v-for="(row, index) in lowStocks" :key="`${row.warehouseName}-${row.goodsName}-${index}`">
+            <span class="stock-name">{{ row.warehouseName }} · {{ row.goodsName }}</span>
+            <span class="stock-qty">{{ quantity(row.availableQty) }} / {{ quantity(row.stockLower) }}</span>
+          </li>
+        </ul>
+        <p v-else class="empty-hint">暂无低库存商品</p>
       </div>
     </div>
   </div>
@@ -652,5 +785,66 @@ onUnmounted(() => {
 .chart-container {
   width: 100%;
   height: 380px;
+}
+
+.side-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+.side-card {
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+.side-card h3 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: #111827;
+}
+.rank-list, .stock-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.rank-list li, .stock-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #f3f4f6;
+  font-size: 13px;
+}
+.rank-index {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #eff6ff;
+  color: #3b82f6;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+.rank-name, .stock-name {
+  flex: 1;
+  color: #374151;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rank-amount {
+  color: #111827;
+  font-weight: 600;
+}
+.stock-qty {
+  color: #ef4444;
+}
+.empty-hint {
+  color: #909399;
+  font-size: 13px;
+  margin: 8px 0;
 }
 </style>

@@ -19,7 +19,7 @@ from app.core.exceptions import AppException, ErrorCode
 from app.models.base_data import BdCustomer, BdGoods, BdUnit, BdWarehouse
 from app.models.finance import FinReceivable
 from app.models.inventory import InvStockFlow
-from app.models.sal import SalOutbound, SalOutboundItem, SalReturn, SalReturnItem
+from app.models.sal import SalOrder, SalOrderItem, SalOutbound, SalOutboundItem, SalReturn, SalReturnItem
 from app.models.sys import SysUser
 from app.repositories.sal_return import SalReturnRepository
 from app.schemas.common import PageResult
@@ -36,6 +36,7 @@ from app.schemas.sal_return import (
 from app.schemas.sal_outbound import SalOutboundStatus
 from app.services.audit import write_oper_log
 from app.services.inventory import InventoryService
+from app.schemas.sal_order import SalOrderStatus
 from app.utils.bill_no import generate_bill_no
 from app.utils.pagination import paginate_result
 
@@ -303,6 +304,10 @@ class SalReturnService:
 
             # 冲减原应收（不建红字）
             await self._reduce_receivable(receivable, total_amount)
+
+            # 同步回退订单出库量，使订单进度与应收余额保持一致
+            await self._rollback_order_outbound_qty(ret)
+
             ret.status = SalReturnStatus.CONFIRMED
             ret.updated_by = user.id
             await self._write_log(
@@ -441,6 +446,82 @@ class SalReturnService:
             receivable.status = 1
         else:
             receivable.status = 0
+        await self._db.flush()
+
+    async def _rollback_order_outbound_qty(self, ret: SalReturn) -> None:
+        """按退货数量回退对应销售订单的 outbound_qty，并重算订单状态。
+
+        通过 source_no 定位原出库单 → 订单 → 订单明细，按商品聚合退货量
+        后减少对应订单明细的 outbound_qty，使订单出库进度与应收余额一致。
+        """
+        outbound = await self._db.scalar(
+            select(SalOutbound).where(
+                SalOutbound.outbound_no == ret.source_no,
+                SalOutbound.tenant_id == self._tenant_id,
+                SalOutbound.is_deleted.is_(False),
+            )
+        )
+        if outbound is None:
+            return
+
+        order_id = int(outbound.order_id)
+
+        # 按商品聚合本次退货量
+        items_map = await self._repo.list_items([int(ret.id)])
+        active_items = [item for item in items_map.get(int(ret.id), []) if not item.is_deleted]
+        merged_qty: dict[int, Decimal] = {}
+        for line in active_items:
+            gid = int(line.goods_id)
+            merged_qty[gid] = merged_qty.get(gid, ZERO) + Decimal(str(line.qty))
+        if not merged_qty:
+            return
+
+        # 加载订单明细（按商品建索引）
+        order_items = await self._db.execute(
+            select(SalOrderItem).where(
+                SalOrderItem.order_id == order_id,
+                SalOrderItem.tenant_id == self._tenant_id,
+                SalOrderItem.is_deleted.is_(False),
+            )
+        )
+        order_item_map = {int(item.goods_id): item for item in order_items.scalars().all()}
+
+        # 加载订单主表
+        order = await self._db.scalar(
+            select(SalOrder).where(
+                SalOrder.id == order_id,
+                SalOrder.tenant_id == self._tenant_id,
+                SalOrder.is_deleted.is_(False),
+            )
+        )
+        if order is None:
+            return
+
+        # 减少各明细的 outbound_qty
+        for goods_id, return_qty in merged_qty.items():
+            item = order_item_map.get(goods_id)
+            if item is None:
+                continue
+            new_outbound = Decimal(str(item.outbound_qty)) - return_qty
+            if new_outbound < ZERO:
+                new_outbound = ZERO
+            item.outbound_qty = new_outbound
+            item.updated_by = ret.updated_by
+
+        # 重算订单状态
+        active_order_items = [item for item in order_item_map.values()]
+        all_done = all(
+            Decimal(str(i.outbound_qty)) >= Decimal(str(i.qty)) for i in active_order_items
+        )
+        any_outbound = any(Decimal(str(i.outbound_qty)) > ZERO for i in active_order_items)
+        if all_done:
+            order.status = SalOrderStatus.COMPLETED
+        elif any_outbound:
+            order.status = SalOrderStatus.PARTIAL_OUT
+        else:
+            order.status = SalOrderStatus.APPROVED
+
+        order.updated_by = ret.updated_by
         await self._db.flush()
 
     async def _resolve_lines(

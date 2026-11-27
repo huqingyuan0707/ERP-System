@@ -29,7 +29,7 @@ from app.core.data_scope import ScopeContext, allows, apply_scope, resolve_scope
 from app.core.exceptions import AppException, ErrorCode
 from app.models.base_data import BdGoods, BdSupplier, BdUnit, BdWarehouse
 from app.models.finance import FinPayable
-from app.models.pur import PurInbound, PurInboundItem, PurReturn, PurReturnItem
+from app.models.pur import PurInbound, PurInboundItem, PurOrder, PurOrderItem, PurReturn, PurReturnItem
 from app.models.sys import SysUser
 from app.repositories.inventory import InventoryRepository
 from app.repositories.purchase_return import PurReturnRepository
@@ -48,9 +48,9 @@ from app.schemas.purchase_return import (
 )
 from app.services.audit import write_oper_log
 from app.services.inventory import InventoryService
+from app.schemas.purchase_order import PurOrderStatus
 from app.utils.bill_no import generate_bill_no
 from app.utils.pagination import paginate_result
-
 
 # 金额与数量统一精度：ROUND_HALF_EVEN（银行家舍入），禁止改为 ROUND_HALF_UP
 CENT = Decimal("0.01")
@@ -91,16 +91,20 @@ class PurchaseReturnService:
 
         # 按商品聚合原入库数量（同一商品多行时合并）与原入库单价（取末行，作退货单价默认值）
         items = (
-            await self._db.execute(
-                select(PurInboundItem)
-                .where(
-                    PurInboundItem.inbound_id == int(inbound.id),
-                    PurInboundItem.tenant_id == self._tenant_id,
-                    PurInboundItem.is_deleted.is_(False),
+            (
+                await self._db.execute(
+                    select(PurInboundItem)
+                    .where(
+                        PurInboundItem.inbound_id == int(inbound.id),
+                        PurInboundItem.tenant_id == self._tenant_id,
+                        PurInboundItem.is_deleted.is_(False),
+                    )
+                    .order_by(PurInboundItem.id)
                 )
-                .order_by(PurInboundItem.id)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         original_qty: dict[int, Decimal] = {}
         last_price: dict[int, Decimal] = {}
         for item in items:
@@ -337,9 +341,7 @@ class PurchaseReturnService:
                 raise AppException(ErrorCode.CONFLICT, "原入库单尚未确认，不能退货")
 
             items_map = await self._repo.list_items([int(ret.id)])
-            active_items = [
-                item for item in items_map.get(int(ret.id), []) if not item.is_deleted
-            ]
+            active_items = [item for item in items_map.get(int(ret.id), []) if not item.is_deleted]
             if not active_items:
                 raise AppException(ErrorCode.VALIDATION_ERROR, "退货单没有明细行，不能确认")
 
@@ -374,9 +376,7 @@ class PurchaseReturnService:
                     raise AppException(
                         ErrorCode.VALIDATION_ERROR, f"商品「{goods.name}」已停用，不能退货出库"
                     )
-                stock = await self._inv_repo.get_stock_for_update(
-                    int(ret.warehouse_id), goods_id
-                )
+                stock = await self._inv_repo.get_stock_for_update(int(ret.warehouse_id), goods_id)
                 available = Decimal(str(stock.available_qty)) if stock is not None else ZERO
                 if stock is None or available < merged[goods_id]:
                     raise AppException(
@@ -417,6 +417,9 @@ class PurchaseReturnService:
 
             # 冲减原应付：amount 与 unpaid_amount 同步减少（G1 口径，不建红字）
             await self._reduce_payable(payable, total_amount)
+
+            # 同步回退订单入库量，使订单进度与应付余额保持一致
+            await self._rollback_order_inbound_qty(ret)
 
             ret.status = PurReturnStatus.CONFIRMED
             ret.updated_by = user.id
@@ -462,6 +465,82 @@ class PurchaseReturnService:
             payable.status = 0
         await self._db.flush()
 
+    async def _rollback_order_inbound_qty(self, ret: PurReturn) -> None:
+        """按退货数量回退对应采购订单的 inbound_qty，并重算订单状态。
+
+        通过 source_no 定位原入库单 → 订单 → 订单明细，按商品聚合退货量
+        后减少对应订单明细的 inbound_qty，使订单入库进度与应付余额一致。
+        """
+        inbound = await self._db.scalar(
+            select(PurInbound).where(
+                PurInbound.inbound_no == ret.source_no,
+                PurInbound.tenant_id == self._tenant_id,
+                PurInbound.is_deleted.is_(False),
+            )
+        )
+        if inbound is None:
+            return
+
+        order_id = int(inbound.order_id)
+
+        # 按商品聚合本次退货量
+        items_map = await self._repo.list_items([int(ret.id)])
+        active_items = [item for item in items_map.get(int(ret.id), []) if not item.is_deleted]
+        merged_qty: dict[int, Decimal] = {}
+        for line in active_items:
+            gid = int(line.goods_id)
+            merged_qty[gid] = merged_qty.get(gid, ZERO) + Decimal(str(line.qty))
+        if not merged_qty:
+            return
+
+        # 加载订单明细（按商品建索引）
+        order_items = await self._db.execute(
+            select(PurOrderItem).where(
+                PurOrderItem.order_id == order_id,
+                PurOrderItem.tenant_id == self._tenant_id,
+                PurOrderItem.is_deleted.is_(False),
+            )
+        )
+        order_item_map = {int(item.goods_id): item for item in order_items.scalars().all()}
+
+        # 加载订单主表
+        order = await self._db.scalar(
+            select(PurOrder).where(
+                PurOrder.id == order_id,
+                PurOrder.tenant_id == self._tenant_id,
+                PurOrder.is_deleted.is_(False),
+            )
+        )
+        if order is None:
+            return
+
+        # 减少各明细的 inbound_qty
+        for goods_id, return_qty in merged_qty.items():
+            item = order_item_map.get(goods_id)
+            if item is None:
+                continue
+            new_inbound = Decimal(str(item.inbound_qty)) - return_qty
+            if new_inbound < ZERO:
+                new_inbound = ZERO
+            item.inbound_qty = new_inbound
+            item.updated_by = ret.updated_by
+
+        # 重算订单状态
+        active_order_items = [item for item in order_item_map.values()]
+        all_done = all(
+            Decimal(str(i.inbound_qty)) >= Decimal(str(i.qty)) for i in active_order_items
+        )
+        any_inbound = any(Decimal(str(i.inbound_qty)) > ZERO for i in active_order_items)
+        if all_done:
+            order.status = PurOrderStatus.COMPLETED
+        elif any_inbound:
+            order.status = PurOrderStatus.PARTIAL_INBOUND
+        else:
+            order.status = PurOrderStatus.APPROVED
+
+        order.updated_by = ret.updated_by
+        await self._db.flush()
+
     async def _assert_source(self, source_no: str) -> PurInbound:
         """校验原入库单：存在、未删除且已确认（草稿无库存与应付，不可退）。"""
         source = await self._repo.get_source_inbound(source_no)
@@ -474,9 +553,7 @@ class PurchaseReturnService:
     async def _assert_supplier(self, supplier_id: int, source_supplier_id: int) -> None:
         """校验退货供应商启用，且必须与原入库单供应商一致（应付按原单定位冲减）。"""
         if supplier_id != int(source_supplier_id):
-            raise AppException(
-                ErrorCode.VALIDATION_ERROR, "退货供应商必须与原入库单供应商一致"
-            )
+            raise AppException(ErrorCode.VALIDATION_ERROR, "退货供应商必须与原入库单供应商一致")
         supplier = await self._db.scalar(
             select(BdSupplier).where(
                 BdSupplier.id == supplier_id,
@@ -585,9 +662,7 @@ class PurchaseReturnService:
             raise AppException(ErrorCode.FORBIDDEN, "无权访问该采购退货单")
         return ret
 
-    async def _bump_version(
-        self, ret: PurReturn, expected: int | None, user_id: int
-    ) -> None:
+    async def _bump_version(self, ret: PurReturn, expected: int | None, user_id: int) -> None:
         """乐观锁：以条件 UPDATE 原子抢占版本号，未命中即 409「数据已被他人修改」。
 
         SQLite 无 SELECT ... FOR UPDATE，只比较内存 version 拦不住并发；
