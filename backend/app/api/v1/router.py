@@ -15,6 +15,7 @@ from app.api.v1.endpoints import (
     export,
     goods,
     inventory,
+    inventory_transfer,
     log,
     payable,
     payment,
@@ -107,6 +108,7 @@ api_router.include_router(log.router)
 api_router.include_router(task.router)
 api_router.include_router(warehouse.router)
 api_router.include_router(inventory.router)
+api_router.include_router(inventory_transfer.router)
 api_router.include_router(supplier.router)
 api_router.include_router(customer.router)
 # B-06：/base/depts/sort、/base/employees/options 等静态路径均在各自模块内先于 /{id} 注册
