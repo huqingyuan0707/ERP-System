@@ -5,18 +5,22 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.common import PageQuery, to_camel
+from app.schemas.inventory import FlowQuery, StockQuery
 
 
-class StockExportQuery(BaseModel):
+class StockExportQuery(StockQuery):
     """库存导出筛选参数（GET /inventory/stocks/export）。
 
-    对外用 camelCase（warehouseId）；populate_by_name 同时兼容旧 snake_case 调用方。
+    继承库存列表查询，保证导出与列表使用同一套筛选条件；
+    page/pageSize 对导出无意义，仅用于兼容 Query 模型。
     """
 
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
-    warehouse_id: int | None = Field(default=None, ge=1, description="仓库 ID")
-    keyword: str | None = Field(default=None, description="商品编码/名称/条码")
+class FlowExportQuery(FlowQuery):
+    """流水导出筛选参数（GET /inventory/flows/export）。
+
+    继承流水列表查询，保证导出与列表使用同一套筛选条件。
+    """
 
 
 class ReportExportQuery(BaseModel):

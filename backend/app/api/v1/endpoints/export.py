@@ -4,6 +4,7 @@
   POST /api/v1/base/goods/import    商品导入
   GET  /api/v1/base/goods/export    商品导出
   GET  /api/v1/inventory/stocks/export  库存导出
+  GET  /api/v1/inventory/flows/export   出入库流水导出
   POST /api/v1/reports/export       通用报表导出（异步任务）
   GET  /api/v1/finance/statements/{id}/export  对账单导出
 """
@@ -19,12 +20,11 @@ from app.core.exceptions import AppException, ErrorCode
 from app.models.sys import SysUser
 from app.schemas.common import ApiResponse, success_response
 from app.schemas.goods import GoodsImportResult, GoodsQuery
-from app.schemas.task import ReportExportQuery, StockExportQuery, TaskOut
+from app.schemas.task import FlowExportQuery, ReportExportQuery, StockExportQuery, TaskOut
 from app.services.auth import AuthService
 from app.services.excel_export import EXPORT_DIR, ExcelExportService
 from app.services.task import TaskService
 from app.utils.importer import build_import_template
-
 
 router = APIRouter(tags=["导入导出"])
 
@@ -83,14 +83,26 @@ async def export_stocks(
     _: Annotated[SysUser, Depends(require_perm(EXPORT_STOCK_PERM))],
     query: Annotated[StockExportQuery, Query()],
 ) -> ApiResponse[TaskOut]:
-    """库存导出：提交异步任务，返回 taskId。
-
-    用 Query 模型接收 warehouseId，确保导出与列表走同一套仓库筛选。
-    """
-    task = await ExcelExportService(db, tenant_id).export_stocks(
+    """库存导出：与实时库存列表使用同一套筛选条件，返回 taskId 供前端轮询下载。"""
+    task = await ExcelExportService(db, tenant_id).export_stock_report(
         created_by=current_user.id,
-        warehouse_id=query.warehouse_id,
-        keyword=query.keyword,
+        query=query,
+    )
+    return success_response(task)
+
+
+@router.get("/inventory/flows/export", summary="出入库流水导出")
+async def export_flows(
+    db: DbDep,
+    current_user: CurrentUserDep,
+    tenant_id: TenantDep,
+    _: Annotated[SysUser, Depends(require_perm(EXPORT_REPORT_PERM))],
+    query: Annotated[FlowExportQuery, Query()],
+) -> ApiResponse[TaskOut]:
+    """流水导出：与出入库流水列表使用同一套筛选条件，返回 taskId 供轮询下载。"""
+    task = await ExcelExportService(db, tenant_id).export_flow_report(
+        created_by=current_user.id,
+        query=query,
     )
     return success_response(task)
 

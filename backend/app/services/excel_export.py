@@ -15,14 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import AppException, ErrorCode
 from app.models.base_data import BdGoods, BdGoodsCategory, BdUnit, BdWarehouse
-from app.models.inventory import InvStock
+from app.models.inventory import InvStock, InvStockFlow
 from app.models.sys import SysTask, SysUser
 from app.repositories.goods import GoodsRepository
+from app.repositories.inventory import InventoryRepository
 from app.repositories.task import TaskRepository
 from app.schemas.goods import GoodsCreate, GoodsImportErrorItem, GoodsImportResult, GoodsQuery
 from app.schemas.purchase_report import PurchaseReportQuery
 from app.schemas.sales_report import SalesReportQuery
-from app.schemas.task import TaskOut
+from app.schemas.task import FlowExportQuery, StockExportQuery, TaskOut
 from app.services.audit import write_oper_log
 from app.services.goods import GoodsService
 from app.services.purchase_report import PurchaseReportService
@@ -329,6 +330,165 @@ class ExcelExportService:
                         ]
                     )
                 last_id = rows[-1][0].id
+            EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+            writer.save(path)
+            return path
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        finally:
+            writer.close()
+
+    async def export_stock_report(self, created_by: int, query: StockExportQuery) -> TaskOut:
+        """I-01 库存导出：与列表同筛选，分批读取避免大结果集一次载入内存。"""
+        params = query.model_dump(mode="json")
+        return await self._execute_export(
+            "stock_export",
+            params,
+            created_by,
+            lambda task_id: self._run_stock_report_export(task_id, query),
+        )
+
+    async def _run_stock_report_export(self, task_id: str, query: StockExportQuery) -> Path:
+        repo = InventoryRepository(self.db, tenant_id=self.tenant_id)
+        # build_stock_query 自带 id 倒序；分批导出必须覆盖为升序，否则 last_id 游标会重复读行
+        stmt = repo.build_stock_query(query).order_by(None).order_by(InvStock.id.asc())
+        writer = ExcelWriter(
+            [
+                "仓库编码",
+                "仓库名称",
+                "商品编码",
+                "商品名称",
+                "规格",
+                "单位",
+                "账面数量",
+                "锁定数量",
+                "可用数量",
+                "平均成本",
+                "库存金额",
+                "库存下限",
+                "库存上限",
+                "低于下限",
+                "更新时间",
+            ],
+            "实时库存",
+        )
+        path = EXPORT_DIR / f"stock_export_{task_id}.xlsx"
+        try:
+            last_id = 0
+            while True:
+                rows = list(
+                    (
+                        await self.db.execute(
+                            stmt.where(InvStock.id > last_id).limit(EXPORT_BATCH_SIZE)
+                        )
+                    ).all()
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    writer.append(
+                        [
+                            row.warehouse_code,
+                            row.warehouse_name,
+                            row.goods_code,
+                            row.goods_name,
+                            row.goods_spec or "",
+                            row.unit_name or "",
+                            str(row.qty),
+                            str(row.locked_qty),
+                            str(row.available_qty),
+                            str(row.avg_cost),
+                            str(row.stock_amount),
+                            str(row.stock_lower),
+                            str(row.stock_upper),
+                            "是" if row.is_below_lower else "否",
+                            str(row.updated_at),
+                        ]
+                    )
+                last_id = int(rows[-1].id)
+            EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+            writer.save(path)
+            return path
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        finally:
+            writer.close()
+
+    async def export_flow_report(self, created_by: int, query: FlowExportQuery) -> TaskOut:
+        """I-02 流水导出：与列表同筛选，分批读取。"""
+        params = query.model_dump(mode="json")
+        return await self._execute_export(
+            "flow_export",
+            params,
+            created_by,
+            lambda task_id: self._run_flow_report_export(task_id, query),
+        )
+
+    async def _run_flow_report_export(self, task_id: str, query: FlowExportQuery) -> Path:
+        repo = InventoryRepository(self.db, tenant_id=self.tenant_id)
+        stmt = repo.build_flow_query(query).order_by(None).order_by(InvStockFlow.id.asc())
+        writer = ExcelWriter(
+            [
+                "业务时间",
+                "类型",
+                "方向",
+                "仓库编码",
+                "仓库名称",
+                "商品编码",
+                "商品名称",
+                "规格",
+                "数量",
+                "变动前",
+                "变动后",
+                "单位成本",
+                "金额",
+                "来源类型",
+                "来源单号",
+                "操作人",
+                "备注",
+                "写入时间",
+            ],
+            "出入库流水",
+        )
+        path = EXPORT_DIR / f"flow_export_{task_id}.xlsx"
+        try:
+            last_id = 0
+            while True:
+                rows = list(
+                    (
+                        await self.db.execute(
+                            stmt.where(InvStockFlow.id > last_id).limit(EXPORT_BATCH_SIZE)
+                        )
+                    ).all()
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    writer.append(
+                        [
+                            str(row.biz_time),
+                            row.flow_type,
+                            "入库" if row.direction == 1 else "出库",
+                            row.warehouse_code or "",
+                            row.warehouse_name or "",
+                            row.goods_code or "",
+                            row.goods_name or "",
+                            row.goods_spec or "",
+                            str(row.qty),
+                            str(row.before_qty),
+                            str(row.after_qty),
+                            str(row.unit_cost),
+                            str(row.amount),
+                            row.source_type or "",
+                            row.source_no or "",
+                            str(row.operator_id or ""),
+                            row.remark or "",
+                            str(row.created_at),
+                        ]
+                    )
+                last_id = int(rows[-1].id)
             EXPORT_DIR.mkdir(parents=True, exist_ok=True)
             writer.save(path)
             return path

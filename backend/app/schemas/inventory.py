@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.schemas.common import PageQuery, to_camel
 
-
 # 流水查询区间跨度上限（天）：流水表只增不删，无上界的区间会退化为全表扫描。
 # 366 天覆盖“整年同比查询”场景，同时拦住恶意/误操作的大范围查询。
 MAX_FLOW_RANGE_DAYS = 366
@@ -17,9 +16,7 @@ MAX_FLOW_RANGE_DAYS = 366
 class StockOut(BaseModel):
     """库存出参。"""
 
-    model_config = ConfigDict(
-        from_attributes=True, alias_generator=to_camel, populate_by_name=True
-    )
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
 
     id: int
     warehouse_id: int
@@ -33,9 +30,7 @@ class StockOut(BaseModel):
 class StockFlowOut(BaseModel):
     """库存流水出参。"""
 
-    model_config = ConfigDict(
-        from_attributes=True, alias_generator=to_camel, populate_by_name=True
-    )
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
 
     id: int
     warehouse_id: int
@@ -144,6 +139,16 @@ FLOW_TYPE_VALUES = (
 )
 
 
+def _parse_db_datetime(value: object) -> object:
+    """兼容开发环境 SQLite 中 ``+08`` 这类短时区写法（ISO 要求 ``+08:00``）。"""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if len(text) >= 3 and (text[-3] in {"+", "-"} and text[-2:].isdigit()):
+        return datetime.fromisoformat(f"{text[:-3]}{text[-3:]}:00")
+    return value
+
+
 # ---------- 库存查询（只读） ----------
 
 
@@ -222,16 +227,19 @@ class FlowQuery(PageQuery):
     warehouse_id: int | None = Field(default=None, ge=1, description="仓库 ID")
     goods_id: int | None = Field(default=None, ge=1, description="商品 ID")
     # 流水类型必须命中白名单，避免任意字符串进入查询条件
-    flow_type: Literal[
-        "purchase_in",
-        "purchase_return",
-        "sale_out",
-        "sale_return",
-        "transfer_in",
-        "transfer_out",
-        "check_gain",
-        "check_loss",
-    ] | None = Field(default=None, description="流水类型")
+    flow_type: (
+        Literal[
+            "purchase_in",
+            "purchase_return",
+            "sale_out",
+            "sale_return",
+            "transfer_in",
+            "transfer_out",
+            "check_gain",
+            "check_loss",
+        ]
+        | None
+    ) = Field(default=None, description="流水类型")
     # 方向：1=入库，-1=出库。查询参数从 URL 传来是字符串，
     # 因此在 before 阶段显式转 int，否则 Literal[-1, 1] 会因 "-1" != -1 而 422。
     direction: int | None = Field(default=None, description="1=入库, -1=出库")
@@ -252,6 +260,7 @@ class FlowQuery(PageQuery):
         if value not in {-1, 1}:
             raise ValueError("direction 只能是 1 或 -1")
         return value
+
     # 来源单号：定位某张单据产生的全部流水
     source_no: str | None = Field(default=None, max_length=64, description="来源单号")
     # 业务时间区间：按 biz_time 过滤，报表与追溯的归集基准
@@ -299,6 +308,11 @@ class FlowListItem(BaseModel):
     operator_id: int | None = None  # 操作人用户 ID
     remark: str | None = None
     created_at: datetime  # 入库写入时间
+
+    @field_validator("biz_time", "created_at", mode="before")
+    @classmethod
+    def parse_db_datetime(cls, value: object) -> object:
+        return _parse_db_datetime(value)
 
 
 class ChangeStockOut(BaseModel):

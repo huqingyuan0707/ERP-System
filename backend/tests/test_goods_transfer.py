@@ -394,9 +394,13 @@ def test_export_endpoints_enforce_exact_permissions(monkeypatch):
         calls.append("goods")
         return _task_out("goods_export")
 
-    async def export_stocks(self, created_by, warehouse_id=None, keyword=None):
+    async def export_stock_report(self, created_by, query):
         calls.append("stock")
         return _task_out("stock_export")
+
+    async def export_flow_report(self, created_by, query):
+        calls.append("flow")
+        return _task_out("flow_export")
 
     async def export_report(self, created_by, report_type):
         calls.append("report")
@@ -407,7 +411,8 @@ def test_export_endpoints_enforce_exact_permissions(monkeypatch):
         return _task_out("statement_export")
 
     monkeypatch.setattr(ExcelExportService, "export_goods", export_goods)
-    monkeypatch.setattr(ExcelExportService, "export_stocks", export_stocks)
+    monkeypatch.setattr(ExcelExportService, "export_stock_report", export_stock_report)
+    monkeypatch.setattr(ExcelExportService, "export_flow_report", export_flow_report)
     monkeypatch.setattr(ExcelExportService, "export_report", export_report)
     monkeypatch.setattr(ExcelExportService, "export_statement", export_statement)
 
@@ -430,6 +435,7 @@ def test_export_endpoints_enforce_exact_permissions(monkeypatch):
             routes = [
                 ("GET", "/base/goods/export", "base:goods:export", "goods"),
                 ("GET", "/inventory/stocks/export", "inv:stock:export", "stock"),
+                ("GET", "/inventory/flows/export", "report:export", "flow"),
                 ("POST", "/reports/export?report_type=finance", "report:export", "report"),
                 (
                     "GET",

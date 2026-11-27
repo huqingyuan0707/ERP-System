@@ -37,16 +37,28 @@ export const exportGoods = (params: {
     params,
   })
 
-/** 库存导出：提交异步任务 */
+/** 库存导出：与列表同筛选，提交异步任务 */
 export const exportStocks = (params: {
-  warehouseId?: number | null
   keyword?: string | null
+  warehouseId?: number | null
+  goodsId?: number | null
+  onlyAvailable?: boolean
+  belowLower?: boolean
 }): Promise<{ taskId: string; taskType: string; status: number }> =>
-  request({
-    url: '/inventory/stocks/export',
-    method: 'get',
-    params,
-  })
+  request({ url: '/inventory/stocks/export', method: 'get', params })
+
+/** 出入库流水导出：与列表同筛选，提交异步任务 */
+export const exportFlows = (params: {
+  keyword?: string | null
+  warehouseId?: number | null
+  goodsId?: number | null
+  flowType?: string | null
+  direction?: number | null
+  sourceNo?: string | null
+  startDate?: string | null
+  endDate?: string | null
+}): Promise<{ taskId: string; taskType: string; status: number }> =>
+  request({ url: '/inventory/flows/export', method: 'get', params })
 
 /**
  * 报表导出：提交异步任务。

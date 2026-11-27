@@ -28,7 +28,7 @@ from app.db.base import Base
 from app.models.base_data import BdGoods, BdUnit, BdWarehouse
 from app.models.inventory import InvStock, InvStockFlow
 from app.models.sys import SysUser
-from app.schemas.inventory import FlowQuery, StockQuery
+from app.schemas.inventory import FlowListItem, FlowQuery, StockQuery
 from app.services.auth import AuthService
 from app.services.inventory import InventoryService
 
@@ -198,7 +198,6 @@ def _grant_all_perms(monkeypatch):
     monkeypatch.setattr(AuthService, "get_permission_codes", _codes)
 
 
-
 def _client(db) -> AsyncClient:
     """构造只挂库存路由的测试应用：覆盖基础鉴权依赖，绕过真实 JWT。
 
@@ -216,6 +215,7 @@ def _client(db) -> AsyncClient:
     app.dependency_overrides[get_current_tenant] = lambda: 1
     app.dependency_overrides[get_current_user] = lambda: fake_user
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+
 
 def test_list_stocks_tenant_and_soft_delete_isolation():
     """列表只含本租户未删除库存行，金额与下限标记正确。"""
@@ -299,6 +299,7 @@ def test_stock_summary_matches_list():
 
     asyncio.run(scenario())
 
+
 def test_list_stocks_unknown_warehouse_returns_422():
     """不存在的仓库 ID 明确报错，而不是静默返回空列表。"""
 
@@ -349,18 +350,14 @@ def test_list_flows_filters_and_date_range():
 
             # 2026-11-01 当天只含 1 条（另一条在 11-02）
             one_day = (
-                await client.get(
-                    "/api/v1/inventory/flows?startDate=2026-11-01&endDate=2026-11-01"
-                )
+                await client.get("/api/v1/inventory/flows?startDate=2026-11-01&endDate=2026-11-01")
             ).json()
             assert one_day["data"]["total"] == 1
             assert one_day["data"]["items"][0]["flowType"] == "purchase_in"
 
             # 覆盖 11-02：证明 endDate 含当日全天（左闭右开实现）
             two_days = (
-                await client.get(
-                    "/api/v1/inventory/flows?startDate=2026-11-01&endDate=2026-11-02"
-                )
+                await client.get("/api/v1/inventory/flows?startDate=2026-11-01&endDate=2026-11-02")
             ).json()
             assert two_days["data"]["total"] == 2
 
@@ -390,3 +387,37 @@ def test_service_direct_query_returns_joined_names():
 
     asyncio.run(scenario())
 
+
+def test_flow_item_parses_legacy_short_timezone():
+    """开发环境 SQLite 历史流水的 +08 时区字符串可正常解析。"""
+
+    def scenario() -> None:
+        row = FlowListItem.model_validate(
+            {
+                "id": 1,
+                "warehouse_id": 1,
+                "warehouse_code": "WH1",
+                "warehouse_name": "主仓",
+                "goods_id": 1,
+                "goods_code": "G001",
+                "goods_name": "螺丝",
+                "goods_spec": None,
+                "flow_type": "purchase_in",
+                "direction": 1,
+                "qty": Decimal("10"),
+                "before_qty": Decimal("0"),
+                "after_qty": Decimal("10"),
+                "unit_cost": Decimal("2"),
+                "amount": Decimal("20"),
+                "source_type": "purchase_inbound",
+                "source_no": "PI-1",
+                "biz_time": "2026-11-15 15:32:46.570457+08",
+                "operator_id": None,
+                "remark": None,
+                "created_at": "2026-11-15 15:32:46.570457+08",
+            }
+        )
+        assert row.biz_time.utcoffset() is not None
+        assert row.biz_time.utcoffset().total_seconds() == 8 * 3600
+
+    scenario()
